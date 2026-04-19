@@ -1065,16 +1065,6 @@ install_express() {
     ERR_LOG=$(mktemp /tmp/kde-err-XXXXXX.log)
     mkfifo "$GAUGE_PIPE"
 
-    # ── Abrir el pipe en un FD persistente (evita bloqueos por open/close) ─
-    # FD 9 queda abierto durante toda la instalacion; whiptail lee de el.
-    exec 9>"$GAUGE_PIPE"
-
-    # ── Funcion auxiliar: escribe progreso al FD abierto ─────────────────
-    # Uso: _gp PORCENTAJE "Mensaje"
-    _gp() {
-        printf '%s\n# %s\n' "$1" "$2" >&9
-    }
-
     # ── Funcion auxiliar: ejecuta xbps y captura errores al log ──────────
     _xbps() {
         local rc=0
@@ -1086,13 +1076,21 @@ install_express() {
         return 0   # nunca abortar el express por un paquete fallido
     }
 
-    # ── Lanzar whiptail gauge (lee del pipe via FD) ───────────────────────
+    # ── Lanzar whiptail PRIMERO (abre el lado lector del FIFO) ───────────
+    # El open() del escritor bloquea hasta que haya un lector; por eso
+    # whiptail debe arrancar antes de que abramos el FD 9 para escribir.
     whiptail --title "$TITLE" --backtitle "$BACKTITLE" \
         --gauge "Preparando instalacion..." 8 70 0 < "$GAUGE_PIPE" &
     local GAUGE_PID=$!
 
-    # Dar un momento a whiptail para abrir el pipe antes del primer _gp
-    sleep 0.3
+    # Ahora abrimos el lado escritor del FIFO sin riesgo de bloqueo
+    exec 9>"$GAUGE_PIPE"
+
+    # Funcion auxiliar: escribe progreso al FD persistente
+    _gp() {
+        printf '%s\n# %s\n' "$1" "$2" >&9
+    }
+
 
     # ── Instalacion real ──────────────────────────────────────────────────
     _gp 3  "Habilitando repos privativos (nonfree + multilib)..."
