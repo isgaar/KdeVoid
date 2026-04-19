@@ -1,0 +1,11 @@
+# Logs del instalador
+*.log
+
+# Archivos temporales
+*.tmp
+*.bak
+
+# Editor
+.vscode/
+*.swp
+*~
