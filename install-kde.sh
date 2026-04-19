@@ -17,6 +17,29 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
+# ─────────────────────────── Interrupción segura ─────────────────────────
+_cleanup() {
+    local sig="${1:-INT}"
+    # Restaurar terminal por si whiptail lo dejó en modo raro
+    tput cnorm 2>/dev/null || true   # mostrar cursor
+    tput rmcup 2>/dev/null || true   # salir de pantalla alternativa
+    stty sane 2>/dev/null || true    # restaurar modo de terminal
+
+    echo -e "\n${YELLOW}[!] Instalación interrumpida por el usuario (Ctrl+C / Ctrl+\\).${RESET}"
+    echo -e "${CYAN}    Los paquetes ya instalados permanecen en el sistema.${RESET}"
+
+    if [ "${LOGGING:-1}" -eq 1 ] && [ -n "${LOGFILE:-}" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INTERRUPCIÓN] El usuario canceló la instalación (señal $sig)." \
+            >> "$LOGFILE" 2>/dev/null || true
+    fi
+
+    exit 130
+}
+
+trap '_cleanup INT'  INT
+trap '_cleanup QUIT' QUIT
+trap '_cleanup TERM' TERM
+
 # ─────────────────────────── Configuración ───────────────────────────────
 TITLE="KDE Plasma Installer — Void Linux"
 BACKTITLE="KDE Plasma para Void Linux | github.com/tu-usuario/kde-void-installer"
