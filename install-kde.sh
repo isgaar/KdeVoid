@@ -175,21 +175,23 @@ PLASMA_CORE_OPTS=(
 )
 
 PLASMA_APPS_OPTS=(
-    "spectacle"                    "Captura de pantalla de KDE" ON
-    "ark"                          "Archivador de KDE" ON
-    "7zip-unrar"                   "Soporte RAR para Ark" OFF
     "dolphin"                      "Gestor de archivos Dolphin" ON
-    "kolourpaint"                  "Editor de imagenes simple para KDE" OFF
-    "krename"                      "Renombrador de archivos en lote para KDE" OFF
-    "filelight"                    "Visualizador de uso de disco" OFF
-    "kdeconnect"                   "Conecta tu telefono con el escritorio" ON
-    "kcalc"                        "Calculadora cientifica de KDE" ON
-    "discover"                     "Gestor de software (Flatpak y mas)" OFF
-    "octoxbps"                     "Frontend grafico para XBPS (Void)" OFF
+    "konsole"                      "Emulador de terminal de KDE" ON
+    "spectacle"                    "Captura de pantalla de KDE" ON
+    "ark"                          "Archivador de KDE (zip, tar, rar...)" ON
     "gwenview"                     "Visor de imagenes de KDE" ON
+    "kwrite"                       "Editor de texto simple de KDE" ON
+    "kcalc"                        "Calculadora cientifica de KDE" ON
+    "kdeconnect"                   "Conecta tu telefono con el escritorio" ON
+    "vlc"                          "Reproductor multimedia universal" ON
+    "kdegraphics-thumbnailers"     "Miniaturas de graficos en Dolphin" ON
+    "ffmpegthumbs"                 "Miniaturas de video en Dolphin" ON
     "okular"                       "Lector de PDF y documentos de KDE" OFF
+    "kolourpaint"                  "Editor de imagenes simple para KDE" OFF
+    "filelight"                    "Visualizador de uso de disco" OFF
+    "krename"                      "Renombrador de archivos en lote para KDE" OFF
     "elisa"                        "Reproductor de musica de KDE" OFF
-    "dragon"                       "Reproductor de video simple de KDE" OFF
+    "octoxbps"                     "Frontend grafico para XBPS (Void)" OFF
 )
 
 PLASMA_OPTIONAL_OPTS=(
@@ -1262,31 +1264,39 @@ install_express() {
     mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
     [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/pipewire.desktop" ] &&     [ -f /usr/share/applications/pipewire.desktop ] &&         ln -sf /usr/share/applications/pipewire.desktop             "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/" 2>>"$ERR_LOG" || true
 
-    _gp 50 "Detectando metapaquete KDE..."
-    local KDE_META
-    if xbps-query -Rs '^kde5$' 2>/dev/null | grep -q "^\[-\] kde5\b"; then
-        KDE_META="kde5"
-    elif xbps-query -Rs '^kde-plasma$' 2>/dev/null | grep -q "^\[-\] kde-plasma\b"; then
+    _gp 50 "Detectando metapaquete KDE disponible..."
+    local KDE_META=""
+    # Intentar detectar cual nombre existe en el repositorio
+    if xbps-query -Rp pkgver kde-plasma 2>/dev/null | grep -q "kde-plasma"; then
         KDE_META="kde-plasma"
-    else
+    elif xbps-query -Rp pkgver kde5 2>/dev/null | grep -q "kde5"; then
         KDE_META="kde5"
     fi
-    log "  -> Metapaquete KDE: $KDE_META"
+    log "  -> Metapaquete KDE detectado: ${KDE_META:-ninguno}"
 
-    _gp 53 "Instalando KDE Plasma (metapaquete $KDE_META)..."
-    _xbps "$KDE_META"
+    _gp 53 "Instalando KDE Plasma..."
+    if [ -n "$KDE_META" ]; then
+        _xbps "$KDE_META"
+    else
+        # Fallback: instalar componentes esenciales directamente
+        log "  -> Metapaquete no encontrado, instalando componentes individuales..."
+        _xbps plasma-desktop plasma-pa kscreen kwin
+    fi
 
-    _gp 63 "Instalando componentes base KDE..."
-    _xbps kde-baseapps plasma-integration breeze
+    _gp 63 "Instalando apps KDE esenciales..."
+    _xbps dolphin konsole ark spectacle gwenview
 
-    _gp 68 "Instalando Wayland/portal KDE + SDDM..."
-    _xbps plasma-wayland-protocols xdg-desktop-portal-kde kwalletmanager sddm
+    _gp 68 "Instalando integracion KDE..."
+    _xbps plasma-integration breeze xdg-desktop-portal-kde
 
-    _gp 72 "Instalando apps KDE (archivo, captura, archivador)..."
-    _xbps spectacle ark dolphin
+    _gp 71 "Instalando Wayland + SDDM..."
+    _xbps plasma-wayland-protocols kwalletmanager sddm
 
-    _gp 76 "Instalando apps KDE (imagenes, musica, extras)..."
-    _xbps gwenview kdeconnect kcalc kdegraphics-thumbnailers ffmpegthumbs
+    _gp 74 "Instalando miniaturas y extras..."
+    _xbps kdeconnect kcalc kdegraphics-thumbnailers ffmpegthumbs
+
+    _gp 77 "Instalando kwrite y utilidades..."
+    _xbps kwrite vlc
 
     _gp 82 "Instalando TLP (ahorro de energia)..."
     _xbps tlp tlp-rdw tlp-dp
