@@ -572,20 +572,18 @@ step_hardware() {
 
     case "$CPU_VENDOR" in
         amd)
-            if yesno "Instalar microcódigo AMD?\n\n  Paquetes: linux-firmware-amd  amd-ucode\n\nMejora la estabilidad y seguridad del procesador.\nMuy recomendado para todos los sistemas AMD."; then
+            if yesno "Instalar microcódigo AMD?\n\n  Paquetes: linux-firmware-amd\n\nMejora la estabilidad y seguridad del procesador.\nMuy recomendado para todos los sistemas AMD."; then
                 clear
                 log "Instalando microcódigo AMD..."
-                sudo xbps-install -Suy linux-firmware-amd amd-ucode 2>/dev/null || \
-                    sudo xbps-install -Suy linux-firmware-amd || true
+                sudo xbps-install -Suy linux-firmware-amd || true
                 msgbox "Microcódigo AMD instalado correctamente."
             fi
             ;;
         intel)
-            if yesno "Instalar microcódigo Intel?\n\n  Paquetes: linux-firmware-intel  intel-ucode\n\nMejora la estabilidad y seguridad del procesador.\nMuy recomendado para todos los sistemas Intel."; then
+            if yesno "Instalar microcódigo Intel?\n\n  Paquetes: linux-firmware-intel\n\nMejora la estabilidad y seguridad del procesador.\nMuy recomendado para todos los sistemas Intel."; then
                 clear
                 log "Instalando microcódigo Intel..."
-                sudo xbps-install -Suy linux-firmware-intel intel-ucode 2>/dev/null || \
-                    sudo xbps-install -Suy linux-firmware-intel || true
+                sudo xbps-install -Suy linux-firmware-intel || true
                 msgbox "Microcódigo Intel instalado correctamente."
             fi
             ;;
@@ -914,7 +912,8 @@ step_power() {
 
     # Habilitar TLP, deshabilitar power-profiles-daemon (incompatible)
     if [[ " ${SELECTED[*]} " == *" tlp "* ]]; then
-        enable_service tlp
+        # TLP no usa runit en Void; se activa via udev al reiniciar
+        log "  -> TLP instalado. Se activara automaticamente al reiniciar."
         if [ -e "/var/service/power-profiles-daemon" ]; then
             log "  -> Deshabilitando power-profiles-daemon (incompatible con TLP)..."
             sudo rm -f /var/service/power-profiles-daemon
@@ -1164,8 +1163,8 @@ install_express() {
 
     local EXTRA_UCODE=()
     case "$CPU_VENDOR" in
-        amd)   EXTRA_UCODE=(linux-firmware-amd amd-ucode) ;;
-        intel) EXTRA_UCODE=(linux-firmware-intel intel-ucode) ;;
+        amd)   EXTRA_UCODE=(linux-firmware-amd) ;;
+        intel) EXTRA_UCODE=(linux-firmware-intel) ;;
     esac
 
     # ── Archivos temporales ───────────────────────────────────────────────
@@ -1177,7 +1176,7 @@ install_express() {
     # ── Funcion auxiliar: ejecuta xbps y captura errores al log ──────────
     _xbps() {
         local rc=0
-        sudo xbps-install -Suy "$@" >> "$ERR_LOG" 2>&1 || rc=$?
+        sudo xbps-install -y "$@" >> "$ERR_LOG" 2>&1 || rc=$?
         if [ $rc -ne 0 ]; then
             printf '[ERROR %s] xbps-install %s (rc=%s)\n' \
                 "$(date '+%H:%M:%S')" "$*" "$rc" >> "$ERR_LOG"
@@ -1304,8 +1303,11 @@ install_express() {
     _gp 90 "Habilitando servicios..."
     enable_service dbus
     enable_service NetworkManager
-    enable_service tlp
-    enable_service tlp-dp
+    # TLP en Void Linux no usa runit service; se activa via udev automaticamente
+    # tras reiniciar. Solo verificar que este instalado.
+    if command -v tlp &>/dev/null; then
+        log "  -> TLP instalado (se activara al reiniciar via udev)"
+    fi
     enable_service sddm
 
     _gp 95 "Creando configuraciones..."
