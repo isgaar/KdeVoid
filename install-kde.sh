@@ -1173,13 +1173,24 @@ install_express() {
     ERR_LOG=$(mktemp /tmp/kde-err-XXXXXX.log)
     mkfifo "$GAUGE_PIPE"
 
-    # ── Funcion auxiliar: ejecuta xbps y captura errores al log ──────────
+    # ── Funcion auxiliar: instala solo los paquetes NO instalados aun ───────
     _xbps() {
+        local to_install=()
+        for pkg in "$@"; do
+            # xbps-query -l muestra "ii <pkgver>" para instalados
+            if ! xbps-query "$pkg" &>/dev/null 2>&1; then
+                to_install+=("$pkg")
+            fi
+        done
+        if [ ${#to_install[@]} -eq 0 ]; then
+            printf '[SKIP %s] Ya instalados: %s\n' "$(date '+%H:%M:%S')" "$*" >> "$ERR_LOG"
+            return 0
+        fi
         local rc=0
-        sudo xbps-install -y "$@" >> "$ERR_LOG" 2>&1 || rc=$?
+        sudo xbps-install -y "${to_install[@]}" >> "$ERR_LOG" 2>&1 || rc=$?
         if [ $rc -ne 0 ]; then
             printf '[ERROR %s] xbps-install %s (rc=%s)\n' \
-                "$(date '+%H:%M:%S')" "$*" "$rc" >> "$ERR_LOG"
+                "$(date '+%H:%M:%S')" "${to_install[*]}" "$rc" >> "$ERR_LOG"
         fi
         return 0   # nunca abortar el express por un paquete fallido
     }
