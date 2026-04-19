@@ -1036,67 +1036,113 @@ install_express() {
         intel) EXTRA_UCODE=(linux-firmware-intel intel-ucode) ;;
     esac
 
-    # Funcion auxiliar: reporta progreso al gauge con flush inmediato
-    # Uso: _gp PORCENTAJE "Mensaje"
+    # ── Archivos temporales ───────────────────────────────────────────────
+    local GAUGE_PIPE ERR_LOG DONE_FLAG
+    GAUGE_PIPE=$(mktemp -u /tmp/kde-gauge-XXXXXX)
+    ERR_LOG=$(mktemp /tmp/kde-err-XXXXXX.log)
+    DONE_FLAG=$(mktemp -u /tmp/kde-done-XXXXXX)
+    mkfifo "$GAUGE_PIPE"
+
+    # ── Funcion auxiliar: manda progreso al pipe con flush inmediato ───────
+    # Uso: _gp PORCENTAJE "Mensaje visible en gauge"
     _gp() {
-        printf '%s\n' "$1"
-        printf '# %s\n' "$2"
+        printf '%s\n# %s\n' "$1" "$2" > "$GAUGE_PIPE"
     }
 
-    # Ejecutar instalacion en un subshell con printf para flush inmediato,
-    # piped directo a whiptail --gauge
+    # ── Funcion auxiliar: ejecuta xbps y captura errores al log ──────────
+    # Uso: _xbps PKG [PKG...]
+    _xbps() {
+        local out
+        if ! out=$(sudo xbps-install -Su "$@" 2>&1); then
+            printf '[ERROR %s] %s\n' "$(date '+%H:%M:%S')" "$out" >> "$ERR_LOG"
+        fi
+    }
+
+    # ── Proceso en background: muestra errores debajo del gauge ──────────
+    # El gauge de whiptail tiene ~10 lineas; nos posicionamos en la fila 12
+    local GAUGE_ROWS=12   # fila donde empieza la zona de errores
+    local MAX_ERR_LINES=$(( TERM_HEIGHT - GAUGE_ROWS - 1 ))
     (
-        _gp 3  "Habilitando repos privativos (nonfree + multilib)..."
-        sudo xbps-install -Su void-repo-nonfree void-repo-multilib >/dev/null 2>&1 || true
+        # Cabecera de zona de errores
+        tput cup $GAUGE_ROWS 0
+        printf '\033[0;31m%-*s\033[0m\n' "$TERM_WIDTH" \
+            "─── Salida / Errores (se actualiza en tiempo real) ────────────────────"
 
-        _gp 5  "Actualizando sistema..."
-        sudo xbps-install -Su >/dev/null 2>&1 || true
+        local last_line=0
+        while [ ! -f "$DONE_FLAG" ] || [ "$last_line" -lt "$(wc -l < "$ERR_LOG" 2>/dev/null || echo 0)" ]; do
+            local current_lines
+            current_lines=$(wc -l < "$ERR_LOG" 2>/dev/null || echo 0)
+            if [ "$current_lines" -gt "$last_line" ]; then
+                # Imprimir solo las lineas nuevas, limitadas al espacio disponible
+                tail -n $(( current_lines - last_line )) "$ERR_LOG" | \
+                    head -n "$MAX_ERR_LINES" | \
+                    while IFS= read -r errline; do
+                        tput cup $(( GAUGE_ROWS + 1 )) 0
+                        printf '\033[0;33m%-*.*s\033[0m\n' \
+                            "$TERM_WIDTH" "$TERM_WIDTH" "$errline"
+                        tput cup $(( GAUGE_ROWS + 2 )) 0
+                    done
+                last_line=$current_lines
+            fi
+            sleep 0.3
+        done
+    ) &
+    local ERR_WATCHER_PID=$!
 
-        _gp 12 "Instalando xorg y base..."
-        sudo xbps-install -Su xorg xorg-server xorg-input-drivers xorg-video-drivers \
-            xinit xinput xrandr xset xsetroot xdpyinfo \
-            wayland dbus NetworkManager >/dev/null 2>&1 || true
+    # ── Proceso gauge de whiptail (lee del pipe) ──────────────────────────
+    whiptail --title "$TITLE" --backtitle "$BACKTITLE" \
+        --gauge "Instalando KDE Plasma completo..." 8 70 0 < "$GAUGE_PIPE" &
+    local GAUGE_PID=$!
 
-        _gp 22 "Instalando microcódigo CPU ($CPU_VENDOR)..."
-        if [ ${#EXTRA_UCODE[@]} -gt 0 ]; then
-            sudo xbps-install -Su "${EXTRA_UCODE[@]}" >/dev/null 2>&1 || true
-        fi
+    # ── Instalacion real (escribe al pipe y al log de errores) ────────────
+    _gp 3  "Habilitando repos privativos (nonfree + multilib)..."
+    _xbps void-repo-nonfree void-repo-multilib
 
-        _gp 30 "Instalando drivers de entrada (libinput)..."
-        sudo xbps-install -Su libinput xf86-input-libinput xinput xset setxkbmap >/dev/null 2>&1 || true
+    _gp 5  "Actualizando sistema..."
+    sudo xbps-install -Su >/dev/null 2>>"$ERR_LOG" || true
 
-        _gp 38 "Instalando audio (PipeWire)..."
-        sudo xbps-install -Su pipewire pipewire-pulse wireplumber alsa-utils pavucontrol >/dev/null 2>&1 || true
+    _gp 12 "Instalando xorg y base..."
+    _xbps xorg xorg-server xorg-input-drivers xorg-video-drivers \
+        xinit xinput xrandr xset xsetroot xdpyinfo wayland dbus NetworkManager
 
-        _gp 52 "Instalando KDE Plasma 6..."
-        sudo xbps-install -Su kde-plasma kde-baseapps plasma-integration \
-            plasma-wayland-protocols xdg-desktop-portal-kde \
-            kwalletmanager breeze sddm >/dev/null 2>&1 || true
+    _gp 22 "Instalando microcódigo CPU ($CPU_VENDOR)..."
+    if [ ${#EXTRA_UCODE[@]} -gt 0 ]; then
+        _xbps "${EXTRA_UCODE[@]}"
+    fi
 
-        _gp 70 "Instalando aplicaciones KDE..."
-        sudo xbps-install -Su spectacle ark dolphin gwenview kdeconnect kcalc \
-            kdegraphics-thumbnailers ffmpegthumbs >/dev/null 2>&1 || true
+    _gp 30 "Instalando drivers de entrada (libinput)..."
+    _xbps libinput xf86-input-libinput xinput xset setxkbmap
 
-        _gp 82 "Instalando TLP (ahorro de energia)..."
-        sudo xbps-install -Su tlp tlp-rdw >/dev/null 2>&1 || true
+    _gp 38 "Instalando audio (PipeWire)..."
+    _xbps pipewire pipewire-pulse wireplumber alsa-utils pavucontrol
 
-        _gp 90 "Habilitando servicios..."
-        enable_service dbus
-        enable_service NetworkManager
-        enable_service tlp
-        enable_service sddm
+    _gp 52 "Instalando KDE Plasma 6..."
+    _xbps kde-plasma kde-baseapps plasma-integration \
+        plasma-wayland-protocols xdg-desktop-portal-kde \
+        kwalletmanager breeze sddm
 
-        _gp 95 "Creando configuraciones..."
-        # xinitrc
-        if [ ! -f "$HOME/.xinitrc" ]; then
-            printf '#!/bin/sh\nexec startplasma-x11\n' > "$HOME/.xinitrc"
-            chmod +x "$HOME/.xinitrc"
-        fi
-        # libinput config
-        local XCONF_DIR="/etc/X11/xorg.conf.d"
-        if [ ! -f "$XCONF_DIR/40-libinput.conf" ]; then
-            sudo mkdir -p "$XCONF_DIR"
-            sudo tee "$XCONF_DIR/40-libinput.conf" > /dev/null << 'LIBINPUT'
+    _gp 70 "Instalando aplicaciones KDE..."
+    _xbps spectacle ark dolphin gwenview kdeconnect kcalc \
+        kdegraphics-thumbnailers ffmpegthumbs
+
+    _gp 82 "Instalando TLP (ahorro de energia)..."
+    _xbps tlp tlp-rdw
+
+    _gp 90 "Habilitando servicios..."
+    enable_service dbus
+    enable_service NetworkManager
+    enable_service tlp
+    enable_service sddm
+
+    _gp 95 "Creando configuraciones..."
+    if [ ! -f "$HOME/.xinitrc" ]; then
+        printf '#!/bin/sh\nexec startplasma-x11\n' > "$HOME/.xinitrc"
+        chmod +x "$HOME/.xinitrc"
+    fi
+    local XCONF_DIR="/etc/X11/xorg.conf.d"
+    if [ ! -f "$XCONF_DIR/40-libinput.conf" ]; then
+        sudo mkdir -p "$XCONF_DIR"
+        sudo tee "$XCONF_DIR/40-libinput.conf" > /dev/null << 'LIBINPUT'
 Section "InputClass"
     Identifier "libinput touchpad catchall"
     MatchIsTouchpad "on"
@@ -1105,14 +1151,36 @@ Section "InputClass"
     Option "NaturalScrolling" "true"
 EndSection
 LIBINPUT
-        fi
-        # Desactivar power-profiles-daemon si existe (incompatible con TLP)
-        [ -e "/var/service/power-profiles-daemon" ] && \
-            sudo rm -f /var/service/power-profiles-daemon || true
+    fi
+    [ -e "/var/service/power-profiles-daemon" ] && \
+        sudo rm -f /var/service/power-profiles-daemon || true
 
-        _gp 100 "Completado."
-    ) | whiptail --title "$TITLE" --backtitle "$BACKTITLE" \
-        --gauge "Instalando KDE Plasma completo..." 8 70 0
+    _gp 100 "Completado."
+
+    # ── Cerrar gauge y watcher ────────────────────────────────────────────
+    sleep 0.5
+    touch "$DONE_FLAG"
+    wait "$GAUGE_PID" 2>/dev/null || true
+    kill "$ERR_WATCHER_PID" 2>/dev/null || true
+    rm -f "$GAUGE_PIPE" "$DONE_FLAG"
+
+    # ── Mostrar resumen de errores si los hubo ────────────────────────────
+    tput cup $(( GAUGE_ROWS )) 0
+    tput ed   # limpiar zona de errores
+    if [ -s "$ERR_LOG" ]; then
+        local ERR_COUNT
+        ERR_COUNT=$(grep -c '^\[ERROR' "$ERR_LOG" || echo "?")
+        whiptail --title "Advertencias de instalacion" --backtitle "$BACKTITLE" \
+            --scrolltext --msgbox \
+"Se encontraron $ERR_COUNT advertencia(s) durante la instalacion.
+Los paquetes que fallaron pueden no estar disponibles o ya estaban instalados.
+
+$(cat "$ERR_LOG" | head -40)
+
+El log completo se guardo en: $LOGFILE" \
+            $HEIGHT $WIDTH
+    fi
+    rm -f "$ERR_LOG"
 
     log "=== Modo Express completado ==="
 
