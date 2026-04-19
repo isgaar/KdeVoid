@@ -146,7 +146,7 @@ BASE_PACKAGES=(
 )
 
 PLASMA_CORE_OPTS=(
-    "kde-plasma"                   "Meta paquete KDE Plasma (escritorio completo)" ON
+    "kde5"                         "Meta paquete KDE Plasma (kde5 o kde-plasma segun repo)" ON
     "kde-baseapps"                 "Kate, Konsole, Khelpcenter" ON
     "plasma-integration"           "Plugins de integracion de tema para Plasma" ON
     "plasma-browser-integration"   "Integracion del navegador con Plasma 6" OFF
@@ -202,12 +202,13 @@ PLASMA_PIM_OPTS=(
 )
 
 AUDIO_OPTS=(
-    "pipewire"                     "Servidor de audio PipeWire (recomendado)" ON
-    "pipewire-pulse"               "Compatibilidad PulseAudio para PipeWire" ON
-    "wireplumber"                  "Gestor de sesiones para PipeWire" ON
-    "alsa-utils"                   "Utilidades ALSA (mezclador de audio)" ON
-    "pavucontrol"                  "Control de volumen grafico" ON
-    "pavucontrol-qt"               "Control de volumen grafico (Qt)" OFF
+    "pipewire"                     "Servidor PipeWire + WirePlumber (obligatorio)" ON
+    "alsa-pipewire"                "Integracion ALSA con PipeWire (recomendado)" ON
+    "alsa-utils"                   "Utilidades ALSA (amixer, aplay...)" ON
+    "libspa-bluetooth"             "Soporte Bluetooth para PipeWire" OFF
+    "libjack-pipewire"             "Interfaz JACK via PipeWire" OFF
+    "pavucontrol-qt"               "Control de volumen grafico (Qt, nativo KDE)" ON
+    "pulseaudio-utils"             "pactl para verificar PulseAudio/PipeWire" ON
 )
 
 XINPUT_OPTS=(
@@ -672,8 +673,8 @@ EOF
 
 step_audio() {
     RAW=$(checklist_menu \
-        "Audio — PipeWire / ALSA" \
-        "Selecciona los componentes de audio.\nPipeWire es la opcion recomendada para KDE Plasma 6:" \
+        "Audio — PipeWire" \
+        "PipeWire es el servidor de audio recomendado para Void + KDE.\nSe configurara automaticamente segun la documentacion oficial:" \
         "${AUDIO_OPTS[@]}") || return 0
 
     RAW=${RAW//\"/}
@@ -686,24 +687,101 @@ step_audio() {
     install_packages "${SELECTED[@]}"
 
     if [[ " ${SELECTED[*]} " == *" pipewire "* ]]; then
-        mkdir -p "$HOME/.config/autostart"
-        if [ ! -f "$HOME/.config/autostart/pipewire.desktop" ]; then
-            cat > "$HOME/.config/autostart/pipewire.desktop" << 'EOF'
-[Desktop Entry]
-Type=Application
-Name=PipeWire
-Exec=pipewire
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-EOF
-        fi
-        log "  -> PipeWire configurado para autostart"
+        configure_pipewire
     fi
-    msgbox "Audio instalado correctamente."
+
+    if [[ " ${SELECTED[*]} " == *" alsa-pipewire "* ]]; then
+        configure_alsa_pipewire
+    fi
+
+    if [[ " ${SELECTED[*]} " == *" libjack-pipewire "* ]]; then
+        configure_jack_pipewire
+    fi
+
+    msgbox "Audio instalado y configurado correctamente.\n\nPara verificar tras reiniciar:\n  pipewire\n  wpctl status\n  pactl info"
+}
+
+# ── Configura PipeWire + WirePlumber segun doc oficial de Void ─────────────
+configure_pipewire() {
+    log "Configurando PipeWire + WirePlumber..."
+
+    # 1. Enlace de WirePlumber (session manager obligatorio)
+    sudo mkdir -p /etc/pipewire/pipewire.conf.d
+    if [ ! -f /etc/pipewire/pipewire.conf.d/10-wireplumber.conf ]; then
+        sudo ln -s /usr/share/examples/wireplumber/10-wireplumber.conf             /etc/pipewire/pipewire.conf.d/
+        log "  -> WirePlumber enlazado en /etc/pipewire/pipewire.conf.d/"
+    fi
+
+    # 2. Interfaz PulseAudio (necesaria para la mayoria de apps)
+    if [ ! -f /etc/pipewire/pipewire.conf.d/20-pipewire-pulse.conf ]; then
+        sudo ln -s /usr/share/examples/pipewire/20-pipewire-pulse.conf             /etc/pipewire/pipewire.conf.d/
+        log "  -> pipewire-pulse enlazado"
+    fi
+
+    # 3. Remover pulseaudio si esta instalado (conflicto)
+    if xbps-query pulseaudio &>/dev/null 2>&1; then
+        log "  -> PulseAudio detectado, removiendo para evitar conflicto..."
+        sudo xbps-remove -R pulseaudio 2>/dev/null || true
+        log "  -> PulseAudio removido"
+    fi
+
+    # 4. Asegurar que el usuario este en el grupo audio y video
+    if ! groups | grep -qw audio; then
+        sudo usermod -aG audio "$USER"
+        log "  -> Usuario $USER agregado al grupo audio"
+    fi
+    if ! groups | grep -qw video; then
+        sudo usermod -aG video "$USER"
+        log "  -> Usuario $USER agregado al grupo video"
+    fi
+
+    # 5. Autostart via XDG (KDE lo respeta automaticamente)
+    local AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+    mkdir -p "$AUTOSTART_DIR"
+    if [ ! -f "$AUTOSTART_DIR/pipewire.desktop" ] &&        [ -f /usr/share/applications/pipewire.desktop ]; then
+        ln -s /usr/share/applications/pipewire.desktop "$AUTOSTART_DIR/"
+        log "  -> pipewire.desktop enlazado en autostart"
+    fi
+
+    log "  -> PipeWire configurado correctamente"
+}
+
+# ── Configura integracion ALSA con PipeWire ───────────────────────────────
+configure_alsa_pipewire() {
+    log "Configurando ALSA para usar PipeWire..."
+    sudo mkdir -p /etc/alsa/conf.d
+    if [ ! -f /etc/alsa/conf.d/50-pipewire.conf ]; then
+        sudo ln -s /usr/share/alsa/alsa.conf.d/50-pipewire.conf             /etc/alsa/conf.d/
+        log "  -> 50-pipewire.conf enlazado"
+    fi
+    if [ ! -f /etc/alsa/conf.d/99-pipewire-default.conf ]; then
+        sudo ln -s /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf             /etc/alsa/conf.d/
+        log "  -> 99-pipewire-default.conf enlazado (dispositivo ALSA por defecto)"
+    fi
+}
+
+# ── Configura interfaz JACK via PipeWire ──────────────────────────────────
+configure_jack_pipewire() {
+    log "Configurando JACK via PipeWire..."
+    if [ ! -f /etc/ld.so.conf.d/pipewire-jack.conf ]; then
+        echo "/usr/lib/pipewire-0.3/jack" |             sudo tee /etc/ld.so.conf.d/pipewire-jack.conf > /dev/null
+        sudo ldconfig
+        log "  -> JACK redirigido a PipeWire via ld.so"
+    fi
 }
 
 # ─────────────────────────── PASO 7: KDE nucleo ──────────────────────────
+
+# Instala el metapaquete KDE con fallback kde5 <-> kde-plasma
+install_kde_meta() {
+    if sudo xbps-install -Su kde5 2>/dev/null; then
+        log "  -> Metapaquete instalado: kde5"
+    elif sudo xbps-install -Su kde-plasma 2>/dev/null; then
+        log "  -> Metapaquete instalado: kde-plasma"
+    else
+        log "  -> ADVERTENCIA: no se pudo instalar kde5 ni kde-plasma"
+    fi
+}
 
 step_plasma_core() {
     RAW=$(checklist_menu \
@@ -718,7 +796,18 @@ step_plasma_core() {
 
     clear
     log "Instalando KDE Plasma nucleo: ${SELECTED[*]}"
-    install_packages "${SELECTED[@]}"
+    # Si se selecciono el metapaquete principal, usar fallback kde5/kde-plasma
+    local FILTERED=()
+    local INSTALL_META=0
+    for pkg in "${SELECTED[@]}"; do
+        if [[ "$pkg" == "kde5" || "$pkg" == "kde-plasma" ]]; then
+            INSTALL_META=1
+        else
+            FILTERED+=("$pkg")
+        fi
+    done
+    [ $INSTALL_META -eq 1 ] && install_kde_meta
+    [ ${#FILTERED[@]} -gt 0 ] && install_packages "${FILTERED[@]}"
 
     if [[ " ${SELECTED[*]} " == *" sddm "* ]]; then
         enable_service sddm
@@ -1112,10 +1201,44 @@ install_express() {
     _xbps libinput xf86-input-libinput xinput xset setxkbmap
 
     _gp 38 "Instalando audio (PipeWire)..."
-    _xbps pipewire pipewire-pulse wireplumber alsa-utils pavucontrol
+    _xbps pipewire alsa-pipewire alsa-utils pavucontrol-qt pulseaudio-utils
+
+    _gp 42 "Configurando PipeWire + WirePlumber..."
+    # Enlace WirePlumber (session manager)
+    sudo mkdir -p /etc/pipewire/pipewire.conf.d
+    [ ! -f /etc/pipewire/pipewire.conf.d/10-wireplumber.conf ] &&         sudo ln -sf /usr/share/examples/wireplumber/10-wireplumber.conf             /etc/pipewire/pipewire.conf.d/ 2>>"$ERR_LOG" || true
+
+    # Interfaz PulseAudio
+    [ ! -f /etc/pipewire/pipewire.conf.d/20-pipewire-pulse.conf ] &&         sudo ln -sf /usr/share/examples/pipewire/20-pipewire-pulse.conf             /etc/pipewire/pipewire.conf.d/ 2>>"$ERR_LOG" || true
+
+    # Remover PulseAudio si existe (conflicto)
+    xbps-query pulseaudio &>/dev/null 2>&1 &&         sudo xbps-remove -R pulseaudio >> "$ERR_LOG" 2>&1 || true
+
+    # ALSA via PipeWire
+    sudo mkdir -p /etc/alsa/conf.d
+    [ ! -f /etc/alsa/conf.d/50-pipewire.conf ] &&         sudo ln -sf /usr/share/alsa/alsa.conf.d/50-pipewire.conf             /etc/alsa/conf.d/ 2>>"$ERR_LOG" || true
+    [ ! -f /etc/alsa/conf.d/99-pipewire-default.conf ] &&         sudo ln -sf /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf             /etc/alsa/conf.d/ 2>>"$ERR_LOG" || true
+
+    # Grupos audio y video
+    groups | grep -qw audio || sudo usermod -aG audio "$USER" 2>>"$ERR_LOG" || true
+    groups | grep -qw video || sudo usermod -aG video "$USER" 2>>"$ERR_LOG" || true
+
+    # Autostart XDG
+    mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+    [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/pipewire.desktop" ] &&     [ -f /usr/share/applications/pipewire.desktop ] &&         ln -sf /usr/share/applications/pipewire.desktop             "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/" 2>>"$ERR_LOG" || true
 
     _gp 52 "Instalando KDE Plasma 6..."
-    _xbps kde-plasma kde-baseapps plasma-integration \
+    # Detectar nombre correcto del metapaquete KDE (kde5 o kde-plasma)
+    local KDE_META
+    if xbps-query -Rs '^kde5$' 2>/dev/null | grep -q "^\[-\] kde5\b"; then
+        KDE_META="kde5"
+    elif xbps-query -Rs '^kde-plasma$' 2>/dev/null | grep -q "^\[-\] kde-plasma\b"; then
+        KDE_META="kde-plasma"
+    else
+        KDE_META="kde5"   # intentar kde5 por defecto si no se puede determinar
+    fi
+    log "  -> Metapaquete KDE detectado: $KDE_META"
+    _xbps "$KDE_META" kde-baseapps plasma-integration \
         plasma-wayland-protocols xdg-desktop-portal-kde \
         kwalletmanager breeze sddm
 
