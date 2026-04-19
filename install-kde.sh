@@ -58,16 +58,25 @@ log() {
 
 # ─────────────────────────── Verificaciones previas ──────────────────────
 check_dependencies() {
-    local missing=()
-    for dep in whiptail xbps-install; do
-        if ! command -v "$dep" &>/dev/null; then
-            missing+=("$dep")
-        fi
-    done
-    if [ ${#missing[@]} -gt 0 ]; then
-        echo -e "${RED}Error: Faltan dependencias: ${missing[*]}${RESET}"
-        echo "Instala con: sudo xbps-install -Su newt"
+    # xbps-install es obligatorio (estamos en Void Linux)
+    if ! command -v xbps-install &>/dev/null; then
+        echo -e "${RED}Error: xbps-install no encontrado. Este script requiere Void Linux.${RESET}"
         exit 1
+    fi
+
+    # Instalar whiptail automaticamente si no esta presente
+    if ! command -v whiptail &>/dev/null; then
+        echo -e "${YELLOW}whiptail no encontrado. Instalando newt...${RESET}"
+        if ! sudo xbps-install -Su newt; then
+            echo -e "${RED}Error: No se pudo instalar newt (whiptail).${RESET}"
+            echo "Instala manualmente con: sudo xbps-install -Su newt"
+            exit 1
+        fi
+        if ! command -v whiptail &>/dev/null; then
+            echo -e "${RED}Error: whiptail sigue sin encontrarse tras instalar newt.${RESET}"
+            exit 1
+        fi
+        echo -e "${GREEN}whiptail instalado correctamente.${RESET}"
     fi
 }
 
