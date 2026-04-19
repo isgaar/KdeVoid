@@ -87,7 +87,10 @@ fi
 
 log() {
     local msg="$*"
-    echo -e "$msg"
+    # En modo express el gauge ocupa stdout; solo escribir al archivo
+    if [ "${_EXPRESS_MODE:-0}" -eq 0 ]; then
+        echo -e "$msg"
+    fi
     if [ "$LOGGING" -eq 1 ]; then
         echo "$(date '+%Y-%m-%d %H:%M:%S') $msg" >> "$LOGFILE"
     fi
@@ -1152,6 +1155,7 @@ step_finish() {
 # ─────────────────────────── Modo Express ────────────────────────────────
 
 install_express() {
+    _EXPRESS_MODE=1
     log "=== MODO EXPRESS: Instalacion completa de KDE Plasma ==="
 
     detect_hardware
@@ -1340,6 +1344,7 @@ El log completo se guardo en: $LOGFILE" \
     fi
     rm -f "$ERR_LOG"
 
+    _EXPRESS_MODE=0
     log "=== Modo Express completado ==="
 
     # Configurar entorno shell
