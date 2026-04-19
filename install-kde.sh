@@ -20,21 +20,35 @@ RESET='\033[0m'
 # ─────────────────────────── Interrupción segura ─────────────────────────
 _cleanup() {
     local sig="${1:-INT}"
-    # Restaurar terminal por si whiptail lo dejó en modo raro
-    tput cnorm 2>/dev/null || true   # mostrar cursor
-    tput rmcup 2>/dev/null || true   # salir de pantalla alternativa
-    stty sane 2>/dev/null || true    # restaurar modo de terminal
+    # Desactivar trap para evitar llamadas recursivas
+    trap '' INT QUIT TERM
 
-    echo -e "\n${YELLOW}[!] Instalación interrumpida por el usuario (Ctrl+C / Ctrl+\\).${RESET}"
+    # Matar todo el grupo de procesos (sudo, xbps, whiptail, subshells)
+    kill -- -$$ 2>/dev/null || true
+
+    # Cerrar FD del gauge si esta abierto
+    exec 9>&- 2>/dev/null || true
+
+    # Restaurar terminal
+    tput cnorm 2>/dev/null || true
+    tput rmcup 2>/dev/null || true
+    stty sane 2>/dev/null || true
+    clear
+
+    echo -e "\n${YELLOW}[!] Instalacion interrumpida por el usuario (Ctrl+C).${RESET}"
     echo -e "${CYAN}    Los paquetes ya instalados permanecen en el sistema.${RESET}"
+    echo -e "${CYAN}    Revisa el log en: ${LOGFILE:-~/.local/state/kde-void-installer/install.log}${RESET}"
 
     if [ "${LOGGING:-1}" -eq 1 ] && [ -n "${LOGFILE:-}" ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [INTERRUPCIÓN] El usuario canceló la instalación (señal $sig)." \
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [CANCELADO] El usuario interrumpio la instalacion (señal $sig)." \
             >> "$LOGFILE" 2>/dev/null || true
     fi
 
     exit 130
 }
+
+# Iniciar el script en su propio grupo de procesos para poder matarlos todos
+set -m 2>/dev/null || true
 
 trap '_cleanup INT'  INT
 trap '_cleanup QUIT' QUIT
@@ -90,9 +104,9 @@ check_dependencies() {
     # Instalar whiptail automaticamente si no esta presente
     if ! command -v whiptail &>/dev/null; then
         echo -e "${YELLOW}whiptail no encontrado. Instalando newt...${RESET}"
-        if ! sudo xbps-install -Su newt; then
+        if ! sudo xbps-install -Suy newt; then
             echo -e "${RED}Error: No se pudo instalar newt (whiptail).${RESET}"
-            echo "Instala manualmente con: sudo xbps-install -Su newt"
+            echo "Instala manualmente con: sudo xbps-install -Suy newt"
             exit 1
         fi
         if ! command -v whiptail &>/dev/null; then
@@ -281,7 +295,7 @@ install_packages() {
         return 0
     fi
     log "  -> Instalando: ${packages[*]}"
-    sudo xbps-install -Su "${packages[@]}"
+    sudo xbps-install -Suy "${packages[@]}"
 }
 
 enable_service() {
@@ -322,10 +336,10 @@ Presiona ENTER para continuar." \
 # ─────────────────────────── PASO 1: Actualizar ──────────────────────────
 
 step_update() {
-    if yesno "Actualizar el sistema antes de instalar?\n\nSe ejecutara: sudo xbps-install -Su\n\n(Muy recomendado para evitar conflictos)"; then
+    if yesno "Actualizar el sistema antes de instalar?\n\nSe ejecutara: sudo xbps-install -Suy\n\n(Muy recomendado para evitar conflictos)"; then
         clear
         log "Actualizando sistema..."
-        sudo xbps-install -Su
+        sudo xbps-install -Suy
         msgbox "Sistema actualizado correctamente."
     else
         log "Actualizacion omitida por el usuario."
@@ -338,14 +352,14 @@ step_repos() {
     # ── Siempre habilitar nonfree y multilib ──────────────────────────────
     clear
     log "Habilitando repositorios privativos (nonfree + multilib)..."
-    sudo xbps-install -Su void-repo-nonfree void-repo-multilib 2>/dev/null || true
-    sudo xbps-install -Su 2>/dev/null || true
+    sudo xbps-install -Suy void-repo-nonfree void-repo-multilib 2>/dev/null || true
+    sudo xbps-install -Suy 2>/dev/null || true
     log "  -> void-repo-nonfree habilitado"
     log "  -> void-repo-multilib habilitado"
 
     # ── Flatpak / Flathub ─────────────────────────────────────────────────
     if yesno "Agregar Flathub (tienda universal de apps)?\n\nRequiere que flatpak este instalado.\nSe instalara flatpak si no esta presente."; then
-        sudo xbps-install -Su flatpak 2>/dev/null || true
+        sudo xbps-install -Suy flatpak 2>/dev/null || true
         if command -v flatpak &>/dev/null; then
             flatpak remote-add --if-not-exists flathub \
                 https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
@@ -365,9 +379,9 @@ step_repos() {
                 NVIDIA_PKGS+=(nvidia-dkms)
             fi
 
-            sudo xbps-install -Su "${NVIDIA_PKGS[@]}" 2>/dev/null || {
+            sudo xbps-install -Suy "${NVIDIA_PKGS[@]}" 2>/dev/null || {
                 log "  -> Error instalando paquete completo, intentando sin 32-bit..."
-                sudo xbps-install -Su nvidia nvidia-libs 2>/dev/null || true
+                sudo xbps-install -Suy nvidia nvidia-libs 2>/dev/null || true
             }
 
             # Configuracion Xorg para NVIDIA
@@ -397,7 +411,7 @@ DRACFG
         fi
     fi
 
-    msgbox "Repositorios configurados:\n\n  [OK]  void-repo-nonfree  (Nvidia, Broadcom, firmwares)\n  [OK]  void-repo-multilib (Steam, Wine, apps 32-bit)\n  $(command -v flatpak &>/dev/null && echo '[OK]' || echo '[ ] ') Flathub\n\nPuedes instalar paquetes privativos normalmente con:\n  sudo xbps-install -Su <paquete>"
+    msgbox "Repositorios configurados:\n\n  [OK]  void-repo-nonfree  (Nvidia, Broadcom, firmwares)\n  [OK]  void-repo-multilib (Steam, Wine, apps 32-bit)\n  $(command -v flatpak &>/dev/null && echo '[OK]' || echo '[ ] ') Flathub\n\nPuedes instalar paquetes privativos normalmente con:\n  sudo xbps-install -Suy <paquete>"
 }
 
 # ─────────────────────────── PASO 2b: Configurar entorno shell ───────────
@@ -427,9 +441,9 @@ alias ls='ls --color=auto'
 alias ll='ls -lah --color=auto'
 alias la='ls -A --color=auto'
 alias grep='grep --color=auto'
-alias xin='sudo xbps-install -Su'
+alias xin='sudo xbps-install -Suy'
 alias xrm='sudo xbps-remove -R'
-alias xup='sudo xbps-install -Su'
+alias xup='sudo xbps-install -Suy'
 alias xq='xbps-query -Rs'
 
 # ── Historial mejorado ───────────────────────────────────────────────────
@@ -490,7 +504,7 @@ INPUTRCEOF
     # ── Instalar fastfetch si no esta ─────────────────────────────────────
     if ! command -v fastfetch &>/dev/null; then
         if yesno "fastfetch no esta instalado.\nDeseas instalarlo ahora?"; then
-            sudo xbps-install -Su fastfetch 2>/dev/null || true
+            sudo xbps-install -Suy fastfetch 2>/dev/null || true
             log "  -> fastfetch instalado"
         fi
     fi
@@ -556,8 +570,8 @@ step_hardware() {
             if yesno "Instalar microcódigo AMD?\n\n  Paquetes: linux-firmware-amd  amd-ucode\n\nMejora la estabilidad y seguridad del procesador.\nMuy recomendado para todos los sistemas AMD."; then
                 clear
                 log "Instalando microcódigo AMD..."
-                sudo xbps-install -Su linux-firmware-amd amd-ucode 2>/dev/null || \
-                    sudo xbps-install -Su linux-firmware-amd || true
+                sudo xbps-install -Suy linux-firmware-amd amd-ucode 2>/dev/null || \
+                    sudo xbps-install -Suy linux-firmware-amd || true
                 msgbox "Microcódigo AMD instalado correctamente."
             fi
             ;;
@@ -565,8 +579,8 @@ step_hardware() {
             if yesno "Instalar microcódigo Intel?\n\n  Paquetes: linux-firmware-intel  intel-ucode\n\nMejora la estabilidad y seguridad del procesador.\nMuy recomendado para todos los sistemas Intel."; then
                 clear
                 log "Instalando microcódigo Intel..."
-                sudo xbps-install -Su linux-firmware-intel intel-ucode 2>/dev/null || \
-                    sudo xbps-install -Su linux-firmware-intel || true
+                sudo xbps-install -Suy linux-firmware-intel intel-ucode 2>/dev/null || \
+                    sudo xbps-install -Suy linux-firmware-intel || true
                 msgbox "Microcódigo Intel instalado correctamente."
             fi
             ;;
@@ -774,9 +788,9 @@ configure_jack_pipewire() {
 
 # Instala el metapaquete KDE con fallback kde5 <-> kde-plasma
 install_kde_meta() {
-    if sudo xbps-install -Su kde5 2>/dev/null; then
+    if sudo xbps-install -Suy kde5 2>/dev/null; then
         log "  -> Metapaquete instalado: kde5"
-    elif sudo xbps-install -Su kde-plasma 2>/dev/null; then
+    elif sudo xbps-install -Suy kde-plasma 2>/dev/null; then
         log "  -> Metapaquete instalado: kde-plasma"
     else
         log "  -> ADVERTENCIA: no se pudo instalar kde5 ni kde-plasma"
@@ -1026,11 +1040,11 @@ Ruta (puedes escribir cualquier ruta existente):" \
     # Instalar Timeshift
     clear
     log "Instalando Timeshift (backend=$TS_BACKEND, ruta=$SNAP_PATH)..."
-    sudo xbps-install -Su timeshift 2>/dev/null || {
+    sudo xbps-install -Suy timeshift 2>/dev/null || {
         log "  -> timeshift no encontrado en repos estandar."
         if [ "$TS_BACKEND" = "btrfs" ]; then
             log "  -> Instalando snapper como alternativa BTRFS..."
-            sudo xbps-install -Su snapper grub-btrfs 2>/dev/null || true
+            sudo xbps-install -Suy snapper grub-btrfs 2>/dev/null || true
         fi
     }
 
@@ -1157,7 +1171,7 @@ install_express() {
     # ── Funcion auxiliar: ejecuta xbps y captura errores al log ──────────
     _xbps() {
         local rc=0
-        sudo xbps-install -Su "$@" >> "$ERR_LOG" 2>&1 || rc=$?
+        sudo xbps-install -Suy "$@" >> "$ERR_LOG" 2>&1 || rc=$?
         if [ $rc -ne 0 ]; then
             printf '[ERROR %s] xbps-install %s (rc=%s)\n' \
                 "$(date '+%H:%M:%S')" "$*" "$rc" >> "$ERR_LOG"
@@ -1185,23 +1199,40 @@ install_express() {
     _gp 3  "Habilitando repos privativos (nonfree + multilib)..."
     _xbps void-repo-nonfree void-repo-multilib
 
-    _gp 5  "Actualizando sistema..."
-    sudo xbps-install -Su >> "$ERR_LOG" 2>&1 || true
+    _gp 6  "Actualizando lista de paquetes..."
+    sudo xbps-install -Suy >> "$ERR_LOG" 2>&1 || true
 
-    _gp 12 "Instalando xorg y base..."
-    _xbps xorg xorg-server xorg-input-drivers xorg-video-drivers \
-        xinit xinput xrandr xset xsetroot xdpyinfo wayland dbus NetworkManager
+    _gp 10 "Instalando xorg-server..."
+    _xbps xorg-server xinit
 
-    _gp 22 "Instalando microcodigo CPU ($CPU_VENDOR)..."
+    _gp 13 "Instalando drivers xorg..."
+    _xbps xorg-input-drivers xorg-video-drivers
+
+    _gp 16 "Instalando utilidades X11..."
+    _xbps xinput xrandr xset xsetroot xdpyinfo
+
+    _gp 19 "Instalando Wayland y D-Bus..."
+    _xbps wayland dbus
+
+    _gp 22 "Instalando NetworkManager..."
+    _xbps NetworkManager
+
+    _gp 25 "Instalando microcodigo CPU ($CPU_VENDOR)..."
     if [ ${#EXTRA_UCODE[@]} -gt 0 ]; then
         _xbps "${EXTRA_UCODE[@]}"
     fi
 
-    _gp 30 "Instalando drivers de entrada (libinput)..."
-    _xbps libinput xf86-input-libinput xinput xset setxkbmap
+    _gp 29 "Instalando libinput..."
+    _xbps libinput xf86-input-libinput
 
-    _gp 38 "Instalando audio (PipeWire)..."
-    _xbps pipewire alsa-pipewire alsa-utils pavucontrol-qt pulseaudio-utils
+    _gp 33 "Instalando utilidades de entrada..."
+    _xbps xinput xset setxkbmap
+
+    _gp 37 "Instalando PipeWire..."
+    _xbps pipewire
+
+    _gp 40 "Instalando integracion ALSA + audio..."
+    _xbps alsa-pipewire alsa-utils pavucontrol-qt pulseaudio-utils
 
     _gp 42 "Configurando PipeWire + WirePlumber..."
     # Enlace WirePlumber (session manager)
@@ -1227,32 +1258,40 @@ install_express() {
     mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
     [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/pipewire.desktop" ] &&     [ -f /usr/share/applications/pipewire.desktop ] &&         ln -sf /usr/share/applications/pipewire.desktop             "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/" 2>>"$ERR_LOG" || true
 
-    _gp 52 "Instalando KDE Plasma 6..."
-    # Detectar nombre correcto del metapaquete KDE (kde5 o kde-plasma)
+    _gp 50 "Detectando metapaquete KDE..."
     local KDE_META
     if xbps-query -Rs '^kde5$' 2>/dev/null | grep -q "^\[-\] kde5\b"; then
         KDE_META="kde5"
     elif xbps-query -Rs '^kde-plasma$' 2>/dev/null | grep -q "^\[-\] kde-plasma\b"; then
         KDE_META="kde-plasma"
     else
-        KDE_META="kde5"   # intentar kde5 por defecto si no se puede determinar
+        KDE_META="kde5"
     fi
-    log "  -> Metapaquete KDE detectado: $KDE_META"
-    _xbps "$KDE_META" kde-baseapps plasma-integration \
-        plasma-wayland-protocols xdg-desktop-portal-kde \
-        kwalletmanager breeze sddm
+    log "  -> Metapaquete KDE: $KDE_META"
 
-    _gp 70 "Instalando aplicaciones KDE..."
-    _xbps spectacle ark dolphin gwenview kdeconnect kcalc \
-        kdegraphics-thumbnailers ffmpegthumbs
+    _gp 53 "Instalando KDE Plasma (metapaquete $KDE_META)..."
+    _xbps "$KDE_META"
+
+    _gp 63 "Instalando componentes base KDE..."
+    _xbps kde-baseapps plasma-integration breeze
+
+    _gp 68 "Instalando Wayland/portal KDE + SDDM..."
+    _xbps plasma-wayland-protocols xdg-desktop-portal-kde kwalletmanager sddm
+
+    _gp 72 "Instalando apps KDE (archivo, captura, archivador)..."
+    _xbps spectacle ark dolphin
+
+    _gp 76 "Instalando apps KDE (imagenes, musica, extras)..."
+    _xbps gwenview kdeconnect kcalc kdegraphics-thumbnailers ffmpegthumbs
 
     _gp 82 "Instalando TLP (ahorro de energia)..."
-    _xbps tlp tlp-rdw
+    _xbps tlp tlp-rdw tlp-dp
 
     _gp 90 "Habilitando servicios..."
     enable_service dbus
     enable_service NetworkManager
     enable_service tlp
+    enable_service tlp-dp
     enable_service sddm
 
     _gp 95 "Creando configuraciones..."
