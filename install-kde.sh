@@ -1060,75 +1060,52 @@ install_express() {
     esac
 
     # ── Archivos temporales ───────────────────────────────────────────────
-    local GAUGE_PIPE ERR_LOG DONE_FLAG
+    local GAUGE_PIPE ERR_LOG
     GAUGE_PIPE=$(mktemp -u /tmp/kde-gauge-XXXXXX)
     ERR_LOG=$(mktemp /tmp/kde-err-XXXXXX.log)
-    DONE_FLAG=$(mktemp -u /tmp/kde-done-XXXXXX)
     mkfifo "$GAUGE_PIPE"
 
-    # ── Funcion auxiliar: manda progreso al pipe con flush inmediato ───────
-    # Uso: _gp PORCENTAJE "Mensaje visible en gauge"
+    # ── Abrir el pipe en un FD persistente (evita bloqueos por open/close) ─
+    # FD 9 queda abierto durante toda la instalacion; whiptail lee de el.
+    exec 9>"$GAUGE_PIPE"
+
+    # ── Funcion auxiliar: escribe progreso al FD abierto ─────────────────
+    # Uso: _gp PORCENTAJE "Mensaje"
     _gp() {
-        printf '%s\n# %s\n' "$1" "$2" > "$GAUGE_PIPE"
+        printf '%s\n# %s\n' "$1" "$2" >&9
     }
 
     # ── Funcion auxiliar: ejecuta xbps y captura errores al log ──────────
-    # Uso: _xbps PKG [PKG...]
     _xbps() {
-        local out
-        if ! out=$(sudo xbps-install -Su "$@" 2>&1); then
-            printf '[ERROR %s] %s\n' "$(date '+%H:%M:%S')" "$out" >> "$ERR_LOG"
+        local rc=0
+        sudo xbps-install -Su "$@" >> "$ERR_LOG" 2>&1 || rc=$?
+        if [ $rc -ne 0 ]; then
+            printf '[ERROR %s] xbps-install %s (rc=%s)\n' \
+                "$(date '+%H:%M:%S')" "$*" "$rc" >> "$ERR_LOG"
         fi
+        return 0   # nunca abortar el express por un paquete fallido
     }
 
-    # ── Proceso en background: muestra errores debajo del gauge ──────────
-    # El gauge de whiptail tiene ~10 lineas; nos posicionamos en la fila 12
-    local GAUGE_ROWS=12   # fila donde empieza la zona de errores
-    local MAX_ERR_LINES=$(( TERM_HEIGHT - GAUGE_ROWS - 1 ))
-    (
-        # Cabecera de zona de errores
-        tput cup $GAUGE_ROWS 0
-        printf '\033[0;31m%-*s\033[0m\n' "$TERM_WIDTH" \
-            "─── Salida / Errores (se actualiza en tiempo real) ────────────────────"
-
-        local last_line=0
-        while [ ! -f "$DONE_FLAG" ] || [ "$last_line" -lt "$(wc -l < "$ERR_LOG" 2>/dev/null || echo 0)" ]; do
-            local current_lines
-            current_lines=$(wc -l < "$ERR_LOG" 2>/dev/null || echo 0)
-            if [ "$current_lines" -gt "$last_line" ]; then
-                # Imprimir solo las lineas nuevas, limitadas al espacio disponible
-                tail -n $(( current_lines - last_line )) "$ERR_LOG" | \
-                    head -n "$MAX_ERR_LINES" | \
-                    while IFS= read -r errline; do
-                        tput cup $(( GAUGE_ROWS + 1 )) 0
-                        printf '\033[0;33m%-*.*s\033[0m\n' \
-                            "$TERM_WIDTH" "$TERM_WIDTH" "$errline"
-                        tput cup $(( GAUGE_ROWS + 2 )) 0
-                    done
-                last_line=$current_lines
-            fi
-            sleep 0.3
-        done
-    ) &
-    local ERR_WATCHER_PID=$!
-
-    # ── Proceso gauge de whiptail (lee del pipe) ──────────────────────────
+    # ── Lanzar whiptail gauge (lee del pipe via FD) ───────────────────────
     whiptail --title "$TITLE" --backtitle "$BACKTITLE" \
-        --gauge "Instalando KDE Plasma completo..." 8 70 0 < "$GAUGE_PIPE" &
+        --gauge "Preparando instalacion..." 8 70 0 < "$GAUGE_PIPE" &
     local GAUGE_PID=$!
 
-    # ── Instalacion real (escribe al pipe y al log de errores) ────────────
+    # Dar un momento a whiptail para abrir el pipe antes del primer _gp
+    sleep 0.3
+
+    # ── Instalacion real ──────────────────────────────────────────────────
     _gp 3  "Habilitando repos privativos (nonfree + multilib)..."
     _xbps void-repo-nonfree void-repo-multilib
 
     _gp 5  "Actualizando sistema..."
-    sudo xbps-install -Su >/dev/null 2>>"$ERR_LOG" || true
+    sudo xbps-install -Su >> "$ERR_LOG" 2>&1 || true
 
     _gp 12 "Instalando xorg y base..."
     _xbps xorg xorg-server xorg-input-drivers xorg-video-drivers \
         xinit xinput xrandr xset xsetroot xdpyinfo wayland dbus NetworkManager
 
-    _gp 22 "Instalando microcódigo CPU ($CPU_VENDOR)..."
+    _gp 22 "Instalando microcodigo CPU ($CPU_VENDOR)..."
     if [ ${#EXTRA_UCODE[@]} -gt 0 ]; then
         _xbps "${EXTRA_UCODE[@]}"
     fi
@@ -1179,26 +1156,24 @@ LIBINPUT
         sudo rm -f /var/service/power-profiles-daemon || true
 
     _gp 100 "Completado."
+    sleep 0.5   # dejar que whiptail muestre el 100%
 
-    # ── Cerrar gauge y watcher ────────────────────────────────────────────
-    sleep 0.5
-    touch "$DONE_FLAG"
+    # ── Cerrar FD y pipe; terminar gauge ──────────────────────────────────
+    exec 9>&-                          # cerrar FD → whiptail recibe EOF y sale
     wait "$GAUGE_PID" 2>/dev/null || true
-    kill "$ERR_WATCHER_PID" 2>/dev/null || true
-    rm -f "$GAUGE_PIPE" "$DONE_FLAG"
+    rm -f "$GAUGE_PIPE"
 
-    # ── Mostrar resumen de errores si los hubo ────────────────────────────
-    tput cup $(( GAUGE_ROWS )) 0
-    tput ed   # limpiar zona de errores
-    if [ -s "$ERR_LOG" ]; then
+    # ── Mostrar log si hubo errores no fatales ────────────────────────────
+    clear
+    if grep -q '^\[ERROR' "$ERR_LOG" 2>/dev/null; then
         local ERR_COUNT
-        ERR_COUNT=$(grep -c '^\[ERROR' "$ERR_LOG" || echo "?")
+        ERR_COUNT=$(grep -c '^\[ERROR' "$ERR_LOG")
         whiptail --title "Advertencias de instalacion" --backtitle "$BACKTITLE" \
             --scrolltext --msgbox \
 "Se encontraron $ERR_COUNT advertencia(s) durante la instalacion.
 Los paquetes que fallaron pueden no estar disponibles o ya estaban instalados.
 
-$(cat "$ERR_LOG" | head -40)
+$(head -40 "$ERR_LOG")
 
 El log completo se guardo en: $LOGFILE" \
             $HEIGHT $WIDTH
