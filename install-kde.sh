@@ -1036,59 +1036,57 @@ install_express() {
         intel) EXTRA_UCODE=(linux-firmware-intel intel-ucode) ;;
     esac
 
-    {
-        echo 3
-        echo "# Habilitando repos privativos (nonfree + multilib)..."
-        sudo xbps-install -Su void-repo-nonfree void-repo-multilib 2>/dev/null || true
+    # Funcion auxiliar: reporta progreso al gauge con flush inmediato
+    # Uso: _gp PORCENTAJE "Mensaje"
+    _gp() {
+        printf '%s\n' "$1"
+        printf '# %s\n' "$2"
+    }
 
-        echo 5
-        echo "# Actualizando sistema..."
-        sudo xbps-install -Su 2>/dev/null || true
+    # Ejecutar instalacion en un subshell con printf para flush inmediato,
+    # piped directo a whiptail --gauge
+    (
+        _gp 3  "Habilitando repos privativos (nonfree + multilib)..."
+        sudo xbps-install -Su void-repo-nonfree void-repo-multilib >/dev/null 2>&1 || true
 
-        echo 12
-        echo "# Instalando xorg y base..."
+        _gp 5  "Actualizando sistema..."
+        sudo xbps-install -Su >/dev/null 2>&1 || true
+
+        _gp 12 "Instalando xorg y base..."
         sudo xbps-install -Su xorg xorg-server xorg-input-drivers xorg-video-drivers \
             xinit xinput xrandr xset xsetroot xdpyinfo \
-            wayland dbus NetworkManager 2>/dev/null || true
+            wayland dbus NetworkManager >/dev/null 2>&1 || true
 
-        echo 22
-        echo "# Instalando microcódigo CPU ($CPU_VENDOR)..."
+        _gp 22 "Instalando microcódigo CPU ($CPU_VENDOR)..."
         if [ ${#EXTRA_UCODE[@]} -gt 0 ]; then
-            sudo xbps-install -Su "${EXTRA_UCODE[@]}" 2>/dev/null || true
+            sudo xbps-install -Su "${EXTRA_UCODE[@]}" >/dev/null 2>&1 || true
         fi
 
-        echo 30
-        echo "# Instalando drivers de entrada (libinput)..."
-        sudo xbps-install -Su libinput xf86-input-libinput xinput xset setxkbmap 2>/dev/null || true
+        _gp 30 "Instalando drivers de entrada (libinput)..."
+        sudo xbps-install -Su libinput xf86-input-libinput xinput xset setxkbmap >/dev/null 2>&1 || true
 
-        echo 38
-        echo "# Instalando audio (PipeWire)..."
-        sudo xbps-install -Su pipewire pipewire-pulse wireplumber alsa-utils pavucontrol 2>/dev/null || true
+        _gp 38 "Instalando audio (PipeWire)..."
+        sudo xbps-install -Su pipewire pipewire-pulse wireplumber alsa-utils pavucontrol >/dev/null 2>&1 || true
 
-        echo 52
-        echo "# Instalando KDE Plasma 6..."
+        _gp 52 "Instalando KDE Plasma 6..."
         sudo xbps-install -Su kde-plasma kde-baseapps plasma-integration \
             plasma-wayland-protocols xdg-desktop-portal-kde \
-            kwalletmanager breeze sddm 2>/dev/null || true
+            kwalletmanager breeze sddm >/dev/null 2>&1 || true
 
-        echo 70
-        echo "# Instalando aplicaciones KDE..."
+        _gp 70 "Instalando aplicaciones KDE..."
         sudo xbps-install -Su spectacle ark dolphin gwenview kdeconnect kcalc \
-            kdegraphics-thumbnailers ffmpegthumbs 2>/dev/null || true
+            kdegraphics-thumbnailers ffmpegthumbs >/dev/null 2>&1 || true
 
-        echo 82
-        echo "# Instalando TLP (ahorro de energia)..."
-        sudo xbps-install -Su tlp tlp-rdw 2>/dev/null || true
+        _gp 82 "Instalando TLP (ahorro de energia)..."
+        sudo xbps-install -Su tlp tlp-rdw >/dev/null 2>&1 || true
 
-        echo 90
-        echo "# Habilitando servicios..."
+        _gp 90 "Habilitando servicios..."
         enable_service dbus
         enable_service NetworkManager
         enable_service tlp
         enable_service sddm
 
-        echo 95
-        echo "# Creando configuraciones..."
+        _gp 95 "Creando configuraciones..."
         # xinitrc
         if [ ! -f "$HOME/.xinitrc" ]; then
             printf '#!/bin/sh\nexec startplasma-x11\n' > "$HOME/.xinitrc"
@@ -1112,8 +1110,8 @@ LIBINPUT
         [ -e "/var/service/power-profiles-daemon" ] && \
             sudo rm -f /var/service/power-profiles-daemon || true
 
-        echo 100
-    } | whiptail --title "$TITLE" --backtitle "$BACKTITLE" \
+        _gp 100 "Completado."
+    ) | whiptail --title "$TITLE" --backtitle "$BACKTITLE" \
         --gauge "Instalando KDE Plasma completo..." 8 70 0
 
     log "=== Modo Express completado ==="
