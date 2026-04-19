@@ -195,6 +195,7 @@ XINPUT_OPTS=(
 TLP_OPTS=(
     "tlp"       "Daemon principal de ahorro de energia" ON
     "tlp-rdw"   "Radio Device Wizard: controla WiFi/BT al suspender" ON
+    "tlp-dp"    "Soporte DisplayPort/dock para TLP" OFF
     "tlpui"     "Interfaz grafica GTK para configurar TLP" OFF
     "powertop"  "Monitor de consumo energetico por proceso" OFF
     "acpid"     "Daemon de eventos ACPI (bateria, tapa de laptop)" OFF
