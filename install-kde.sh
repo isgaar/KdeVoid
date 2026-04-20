@@ -247,7 +247,7 @@ XINPUT_OPTS=(
 TLP_OPTS=(
     "tlp"       "Daemon principal de ahorro de energia" ON
     "tlp-rdw"   "Radio Device Wizard: controla WiFi/BT al suspender" ON
-    "tlp-dp"    "Soporte DisplayPort/dock para TLP" OFF
+    "tlp-pd"    "Soporte power-profiles-daemon para TLP (tlp-pd)" ON
     "tlpui"     "Interfaz grafica GTK para configurar TLP" OFF
     "powertop"  "Monitor de consumo energetico por proceso" OFF
     "acpid"     "Daemon de eventos ACPI (bateria, tapa de laptop)" OFF
@@ -422,34 +422,31 @@ DRACFG
 # ─────────────────────────── PASO 2b: Configurar entorno shell ───────────
 
 step_shell_env() {
-    if ! yesno "Configurar entorno bash (.bashrc / .inputrc)?\n\nEsto aplicara:\n  - Prompt estilo Debian con verde openSUSE\n  - fastfetch al abrir terminal\n  - .inputrc con mejoras de readline\n\nTus archivos actuales se respaldan como .bashrc.bak"; then
+    if ! yesno "Configurar entorno bash (.bashrc / .inputrc)?\n\nEsto aplicara a TODOS los usuarios (skel + existentes):\n  - Prompt estilo Debian con verde openSUSE\n  - fastfetch al abrir terminal\n  - .inputrc con mejoras de readline\n\nLos archivos actuales se respaldan como .bak"; then
         log "Configuracion de shell omitida."
         return 0
     fi
 
-    # ── .bashrc ───────────────────────────────────────────────────────────
-    local BASHRC="$HOME/.bashrc"
-    [ -f "$BASHRC" ] && cp "$BASHRC" "${BASHRC}.bak" && log "  -> Respaldo: ${BASHRC}.bak"
-
-    cat > "$BASHRC" << 'BASHRCEOF'
-# ~/.bashrc — Configurado por kde-void-installer
+    # ── Contenido de .bashrc ──────────────────────────────────────────────
+    local BASHRC_CONTENT
+    BASHRC_CONTENT='# ~/.bashrc — Configurado por kde-void-installer
 # Basado en la config de Ismael para openSUSE / Void Linux
 
 # Salir si no es interactivo
 [[ $- != *i* ]] && return
 
 # ── Prompt estilo Debian con verde openSUSE ──────────────────────────────
-PS1='\[\e[38;5;112m\]\u@\h\[\e[0m\]:\[\e[38;5;33m\]\w\[\e[0m\]\$ '
+PS1='"'"'\[\e[38;5;112m\]\u@\h\[\e[0m\]:\[\e[38;5;33m\]\w\[\e[0m\]\$ '"'"'
 
 # ── Alias utiles ─────────────────────────────────────────────────────────
-alias ls='ls --color=auto'
-alias ll='ls -lah --color=auto'
-alias la='ls -A --color=auto'
-alias grep='grep --color=auto'
-alias xin='sudo xbps-install -Suy'
-alias xrm='sudo xbps-remove -R'
-alias xup='sudo xbps-install -Suy'
-alias xq='xbps-query -Rs'
+alias ls='"'"'ls --color=auto'"'"'
+alias ll='"'"'ls -lah --color=auto'"'"'
+alias la='"'"'ls -A --color=auto'"'"'
+alias grep='"'"'grep --color=auto'"'"'
+alias xin='"'"'sudo xbps-install -Suy'"'"'
+alias xrm='"'"'sudo xbps-remove -R'"'"'
+alias xup='"'"'sudo xbps-install -Suy'"'"'
+alias xq='"'"'xbps-query -Rs'"'"'
 
 # ── Historial mejorado ───────────────────────────────────────────────────
 HISTSIZE=5000
@@ -464,17 +461,11 @@ test -s ~/.alias && . ~/.alias || true
 # ── Fastfetch al iniciar terminal ────────────────────────────────────────
 if command -v fastfetch &>/dev/null; then
     fastfetch
-fi
-BASHRCEOF
+fi'
 
-    log "  -> ~/.bashrc configurado"
-
-    # ── .inputrc ─────────────────────────────────────────────────────────
-    local INPUTRC="$HOME/.inputrc"
-    [ -f "$INPUTRC" ] && cp "$INPUTRC" "${INPUTRC}.bak" && log "  -> Respaldo: ${INPUTRC}.bak"
-
-    cat > "$INPUTRC" << 'INPUTRCEOF'
-# ~/.inputrc — Configurado por kde-void-installer
+    # ── Contenido de .inputrc ─────────────────────────────────────────────
+    local INPUTRC_CONTENT
+    INPUTRC_CONTENT='# ~/.inputrc — Configurado por kde-void-installer
 
 # Sin campanilla
 set bell-style none
@@ -501,10 +492,54 @@ set visible-stats on
 "\e[1;5C": forward-word
 "\e[1;5D": backward-word
 
-# end
-INPUTRCEOF
+# end'
 
-    log "  -> ~/.inputrc configurado"
+    # ── Aplicar a /etc/skel (nuevos usuarios) ─────────────────────────────
+    log "  -> Escribiendo en /etc/skel/.bashrc y /etc/skel/.inputrc ..."
+    sudo mkdir -p /etc/skel
+    [ -f /etc/skel/.bashrc ]  && sudo cp /etc/skel/.bashrc  /etc/skel/.bashrc.bak
+    [ -f /etc/skel/.inputrc ] && sudo cp /etc/skel/.inputrc /etc/skel/.inputrc.bak
+    printf '%s\n' "$BASHRC_CONTENT"  | sudo tee /etc/skel/.bashrc  > /dev/null
+    printf '%s\n' "$INPUTRC_CONTENT" | sudo tee /etc/skel/.inputrc > /dev/null
+    log "  -> /etc/skel/.bashrc y /etc/skel/.inputrc actualizados"
+
+    # ── Aplicar al usuario actual ─────────────────────────────────────────
+    local BASHRC="$HOME/.bashrc"
+    local INPUTRC="$HOME/.inputrc"
+    [ -f "$BASHRC" ]  && cp "$BASHRC"  "${BASHRC}.bak"  && log "  -> Respaldo: ${BASHRC}.bak"
+    [ -f "$INPUTRC" ] && cp "$INPUTRC" "${INPUTRC}.bak" && log "  -> Respaldo: ${INPUTRC}.bak"
+    printf '%s\n' "$BASHRC_CONTENT"  > "$BASHRC"
+    printf '%s\n' "$INPUTRC_CONTENT" > "$INPUTRC"
+    log "  -> ~/.bashrc y ~/.inputrc del usuario actual configurados"
+
+    # ── Propagar a todos los usuarios del sistema (home en /home) ─────────
+    local PROPAGATED=0
+    for USER_HOME in /home/*/; do
+        [ -d "$USER_HOME" ] || continue
+        local TARGET_USER
+        TARGET_USER=$(basename "$USER_HOME")
+        # Omitir si es el usuario actual (ya hecho arriba)
+        [ "$TARGET_USER" = "$USER" ] && continue
+
+        log "  -> Propagando a $TARGET_USER ..."
+        [ -f "$USER_HOME/.bashrc" ]  && sudo cp "$USER_HOME/.bashrc"  "$USER_HOME/.bashrc.bak"
+        [ -f "$USER_HOME/.inputrc" ] && sudo cp "$USER_HOME/.inputrc" "$USER_HOME/.inputrc.bak"
+        printf '%s\n' "$BASHRC_CONTENT"  | sudo tee "$USER_HOME/.bashrc"  > /dev/null
+        printf '%s\n' "$INPUTRC_CONTENT" | sudo tee "$USER_HOME/.inputrc" > /dev/null
+        sudo chown "$(stat -c '%u:%g' "$USER_HOME")" \
+            "$USER_HOME/.bashrc" "$USER_HOME/.inputrc" 2>/dev/null || true
+        PROPAGATED=$((PROPAGATED + 1))
+    done
+
+    # ── Aplicar tambien a root ─────────────────────────────────────────────
+    if [ -d /root ]; then
+        log "  -> Propagando a root ..."
+        [ -f /root/.bashrc ]  && sudo cp /root/.bashrc  /root/.bashrc.bak
+        [ -f /root/.inputrc ] && sudo cp /root/.inputrc /root/.inputrc.bak
+        printf '%s\n' "$BASHRC_CONTENT"  | sudo tee /root/.bashrc  > /dev/null
+        printf '%s\n' "$INPUTRC_CONTENT" | sudo tee /root/.inputrc > /dev/null
+        PROPAGATED=$((PROPAGATED + 1))
+    fi
 
     # ── Instalar fastfetch si no esta ─────────────────────────────────────
     if ! command -v fastfetch &>/dev/null; then
@@ -514,7 +549,7 @@ INPUTRCEOF
         fi
     fi
 
-    msgbox "Entorno shell configurado correctamente.\n\nArchivos creados:\n  ~/.bashrc    (prompt, alias, fastfetch)\n  ~/.inputrc   (readline mejorado)\n\nRespaldos guardados como .bak\n\nRecarga con:  source ~/.bashrc"
+    msgbox "Entorno shell configurado para TODOS los usuarios.\n\nArchivos actualizados en:\n  /etc/skel/.bashrc   (nuevos usuarios)\n  /etc/skel/.inputrc\n  ~/.bashrc  ~/.inputrc  (usuario actual)\n  $PROPAGATED usuario(s) adicionales en /home/ y root\n\nRespaldos guardados como .bak\n\nRecarga con:  source ~/.bashrc"
 }
 
 # ─────────────────────────── PASO 3: Hardware / CPU ──────────────────────
@@ -1309,7 +1344,7 @@ install_express() {
     _xbps kwrite vlc
 
     _gp 82 "Instalando TLP (ahorro de energia)..."
-    _xbps tlp tlp-rdw tlp-dp
+    _xbps tlp tlp-rdw tlp-pd
 
     _gp 90 "Habilitando servicios..."
     enable_service dbus
