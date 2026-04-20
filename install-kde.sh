@@ -192,6 +192,8 @@ PLASMA_APPS_OPTS=(
     "krename"                      "Renombrador de archivos en lote para KDE" OFF
     "elisa"                        "Reproductor de musica de KDE" OFF
     "octoxbps"                     "Frontend grafico para XBPS (Void)" OFF
+    "discover"                     "Tienda de aplicaciones KDE Discover" ON
+    "packagekit-qt5"               "Backend PackageKit para Discover (XBPS)" ON
 )
 
 PLASMA_OPTIONAL_OPTS=(
@@ -200,7 +202,9 @@ PLASMA_OPTIONAL_OPTS=(
     "ufw"                          "Firewall sin complicaciones (UFW)" OFF
     "plasma-firewall"              "Panel de control para UFW en Plasma" OFF
     "flatpak-kcm"                  "Modulo KDE para permisos Flatpak" OFF
+    "discover-flatpak-backend"     "Backend Flatpak para Discover (Flathub)" OFF
     "fwupd"                        "Actualizaciones de firmware" OFF
+    "discover-fwupd-backend"       "Backend fwupd para Discover (firmware)" OFF
     "clinfo"                       "Informacion OpenCL del sistema" OFF
     "aha"                          "Conversor ANSI a HTML para centro de info" OFF
     "wayland-utils"                "Utilidades Wayland" OFF
@@ -1340,8 +1344,8 @@ install_express() {
     _gp 74 "Instalando miniaturas y extras..."
     _xbps kdeconnect kcalc kdegraphics-thumbnailers ffmpegthumbs
 
-    _gp 77 "Instalando kwrite y utilidades..."
-    _xbps kwrite vlc
+    _gp 77 "Instalando kwrite, Discover y utilidades..."
+    _xbps kwrite vlc discover packagekit-qt5
 
     _gp 82 "Instalando TLP (ahorro de energia)..."
     _xbps tlp tlp-rdw tlp-pd
