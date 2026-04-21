@@ -396,13 +396,24 @@ step_repos() {
     log "  -> void-repo-multilib habilitado"
 
     # ── Flatpak / Flathub ─────────────────────────────────────────────────
-    if yesno "Agregar Flathub (tienda universal de apps)?\n\nRequiere que flatpak este instalado.\nSe instalara flatpak si no esta presente."; then
-        sudo xbps-install -Suy flatpak 2>/dev/null || true
+    if yesno "Agregar Flatpak + Flathub?\n\n  flatpak              -> Gestor de paquetes Flatpak\n  flatpak-kcm          -> Permisos Flatpak en Config. del Sistema\n  discover-flatpak-backend -> Flatpak en KDE Discover\n  Flathub              -> Repositorio oficial de Flatpak\n\nPermite instalar miles de apps desde Discover."; then
+        clear
+        log "Instalando Flatpak y backend para Discover..."
+        sudo xbps-install -Suy flatpak flatpak-kcm 2>/dev/null || true
+
+        # Backend de Discover para Flatpak
+        sudo xbps-install -Suy discover-flatpak-backend 2>/dev/null || true
+
         if command -v flatpak &>/dev/null; then
-            flatpak remote-add --if-not-exists flathub \
+            # Agregar Flathub para todos los usuarios
+            sudo flatpak remote-add --if-not-exists flathub \
                 https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
-            log "  -> Flathub agregado"
+            # Agregar tambien para el usuario actual
+            flatpak remote-add --user --if-not-exists flathub \
+                https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+            log "  -> Flatpak + Flathub configurados (sistema y usuario)"
         fi
+        msgbox "Flatpak configurado correctamente.\n\nFlathub agregado para:\n  - Sistema (sudo)\n  - Usuario actual\n\nAbre KDE Discover para instalar apps Flatpak.\nO desde terminal:\n  flatpak install flathub <app-id>"
     fi
 
     # ── Drivers de VIDEO (ahora gestionados por step_gpu) ────────────────
@@ -1500,7 +1511,9 @@ NVEXPRESS
     fi
 
     _gp 63 "Instalando apps KDE esenciales..."
-    _xbps dolphin konsole ark spectacle gwenview
+    _xbps dolphin ark spectacle gwenview
+    sudo xbps-install -Suy konsole >> "$ERR_LOG" 2>&1 || \
+        printf '[ERROR %s] No se pudo instalar konsole\n' "$(date '+%H:%M:%S')" >> "$ERR_LOG"
 
     _gp 68 "Instalando integracion KDE..."
     _xbps plasma-integration breeze xdg-desktop-portal-kde
@@ -1514,7 +1527,18 @@ NVEXPRESS
     _gp 77 "Instalando kwrite y utilidades..."
     _xbps kwrite vlc packagekit-qt5 flatpak-kcm
 
-    _gp 79 "Instalando KDE Discover (tienda de apps)..."
+    _gp 79 "Instalando Flatpak + Flathub..."
+    sudo xbps-install -Suy flatpak flatpak-kcm >> "$ERR_LOG" 2>&1 || true
+    sudo xbps-install -Suy discover-flatpak-backend >> "$ERR_LOG" 2>&1 || true
+    if command -v flatpak &>/dev/null; then
+        sudo flatpak remote-add --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo >> "$ERR_LOG" 2>&1 || true
+        flatpak remote-add --user --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo >> "$ERR_LOG" 2>&1 || true
+        log "  -> Flatpak + Flathub configurados"
+    fi
+
+    _gp 81 "Instalando KDE Discover (tienda de apps)..."
     sudo xbps-install -Suy discover >> "$ERR_LOG" 2>&1 || \
         printf '[ERROR %s] No se pudo instalar discover\n' "$(date '+%H:%M:%S')" >> "$ERR_LOG"
 
