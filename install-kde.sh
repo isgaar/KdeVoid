@@ -56,7 +56,32 @@ trap '_cleanup TERM' TERM
 
 # ─────────────────────────── Configuración ───────────────────────────────
 TITLE="KDE Plasma Installer — Void Linux"
-BACKTITLE="KDE Plasma para Void Linux | github.com/tu-usuario/kde-void-installer"
+BACKTITLE="KDE Plasma para Void Linux | github.com/isgaar/KdeVoid"
+
+# ─────────────────────────── Tema whiptail (verde oscuro) ────────────────
+export NEWT_COLORS='
+root=,black
+border=green,black
+title=green,black
+roottext=white,black
+window=,black
+textbox=white,black
+button=black,green
+actbutton=white,darkgreen
+checkbox=white,black
+actcheckbox=black,green
+entry=white,black
+label=green,black
+listbox=white,black
+actlistbox=black,green
+sellistbox=black,darkgreen
+actsellistbox=black,green
+compactbutton=white,black
+emptyscale=,black
+fullscale=,green
+listheader=black,green
+acthdr=black,green
+'
 LOGFILE_DIR="$HOME/.local/state/kde-void-installer"
 LOGFILE="$LOGFILE_DIR/install.log"
 LOGGING=1
@@ -330,16 +355,20 @@ step_welcome() {
 Este instalador te guiara paso a paso para instalar
 KDE Plasma 6 en tu sistema Void Linux.
 
+Repositorio: https://github.com/isgaar/KdeVoid
+
 Podras elegir exactamente que componentes instalar:
   - Microcódigo CPU (AMD/Intel)
+  - Drivers de VIDEO (Intel / AMD / NVIDIA)
   - Drivers de entrada (xinput/libinput)
   - Audio (PipeWire)
   - KDE Plasma 6 y aplicaciones
+  - KDE Discover (tienda de apps)
   - Gestion de energia (TLP)
   - Timeshift para instantaneas del sistema
 
 Presiona ENTER para continuar." \
-    20 62
+    22 64
 }
 
 # ─────────────────────────── PASO 1: Actualizar ──────────────────────────
@@ -376,49 +405,9 @@ step_repos() {
         fi
     fi
 
-    # ── Drivers NVIDIA privativos ─────────────────────────────────────────
-    if [ "$GPU_VENDOR" = "nvidia" ]; then
-        if yesno "GPU NVIDIA detectada.\n\nInstalar drivers privativos NVIDIA?\n\n  nvidia           -> Driver propietario (recomendado)\n  nvidia-libs      -> Librerias OpenGL 64-bit\n  nvidia-libs-32bit -> Librerias 32-bit (Steam/Wine)\n  nvidia-dkms      -> Modulo DKMS para kernels custom\n\nNota: requiere void-repo-nonfree (ya habilitado)."; then
-            clear
-            log "Instalando drivers NVIDIA privativos..."
-
-            # Detectar si hay kernel generico o custom
-            local NVIDIA_PKGS=(nvidia nvidia-libs nvidia-libs-32bit)
-            if xbps-query -Rs linux-headers &>/dev/null 2>&1; then
-                NVIDIA_PKGS+=(nvidia-dkms)
-            fi
-
-            sudo xbps-install -Suy "${NVIDIA_PKGS[@]}" 2>/dev/null || {
-                log "  -> Error instalando paquete completo, intentando sin 32-bit..."
-                sudo xbps-install -Suy nvidia nvidia-libs 2>/dev/null || true
-            }
-
-            # Configuracion Xorg para NVIDIA
-            local XCONF_DIR="/etc/X11/xorg.conf.d"
-            sudo mkdir -p "$XCONF_DIR"
-            if [ ! -f "$XCONF_DIR/10-nvidia.conf" ]; then
-                sudo tee "$XCONF_DIR/10-nvidia.conf" > /dev/null << 'NVIDIACFG'
-Section "Device"
-    Identifier "NVIDIA"
-    Driver     "nvidia"
-    Option     "NoLogo" "true"
-EndSection
-NVIDIACFG
-                log "  -> /etc/X11/xorg.conf.d/10-nvidia.conf creado"
-            fi
-
-            # Agregar modulos NVIDIA al initramfs (dracut / mkinitcpio)
-            if [ -f /etc/dracut.conf.d ]; then
-                sudo tee /etc/dracut.conf.d/nvidia.conf > /dev/null << 'DRACFG'
-add_drivers+=" nvidia nvidia_modeset nvidia_uvm nvidia_drm "
-DRACFG
-                log "  -> Modulos NVIDIA agregados a dracut"
-            fi
-
-            log "  -> Drivers NVIDIA instalados"
-            msgbox "Drivers NVIDIA instalados correctamente.\n\nArchivos creados:\n  /etc/X11/xorg.conf.d/10-nvidia.conf\n\nNota: reinicia el sistema para cargar el driver.\nVerifica con: nvidia-smi"
-        fi
-    fi
+    # ── Drivers de VIDEO (ahora gestionados por step_gpu) ────────────────
+    # Los drivers se instalan en el paso dedicado step_gpu (paso a paso)
+    # o en install_express via _gp de drivers. No se instalan aqui.
 
     msgbox "Repositorios configurados:\n\n  [OK]  void-repo-nonfree  (Nvidia, Broadcom, firmwares)\n  [OK]  void-repo-multilib (Steam, Wine, apps 32-bit)\n  $(command -v flatpak &>/dev/null && echo '[OK]' || echo '[ ] ') Flathub\n\nPuedes instalar paquetes privativos normalmente con:\n  sudo xbps-install -Suy <paquete>"
 }
@@ -628,6 +617,145 @@ step_hardware() {
             ;;
         *)
             log "No se instala microcódigo para CPU: $CPU_VENDOR"
+            ;;
+    esac
+}
+
+# ─────────────────────────── PASO 3b: Drivers de VIDEO ───────────────────
+
+step_gpu() {
+    detect_hardware
+
+    local gpu_label="Desconocido"
+    [ "$GPU_VENDOR" = "amd" ]    && gpu_label="AMD / ATI / Radeon (detectado)"
+    [ "$GPU_VENDOR" = "nvidia" ] && gpu_label="NVIDIA (detectado)"
+    [ "$GPU_VENDOR" = "intel" ]  && gpu_label="Intel Graphics (detectado)"
+    [ "$GPU_VENDOR" = "other" ]  && gpu_label="No identificado"
+
+    local GPU_CHOICE
+    GPU_CHOICE=$(radiolist_menu \
+        "Drivers de Video" \
+        "GPU detectada: $gpu_label\n\nSelecciona el driver a instalar para tu tarjeta grafica:" \
+        "intel"  "Intel  (HD / UHD / Iris — xf86-video-intel + mesa)"   $([ "$GPU_VENDOR" = "intel" ]  && echo ON || echo OFF) \
+        "amd"    "AMD / ATI  (Radeon / RX — mesa + xf86-video-amdgpu)"  $([ "$GPU_VENDOR" = "amd" ]    && echo ON || echo OFF) \
+        "nvidia" "NVIDIA  (drivers privativos desde void-repo-nonfree)"  $([ "$GPU_VENDOR" = "nvidia" ] && echo ON || echo OFF) \
+        "none"   "Ninguno  (ya instalado o configuracion manual)"        $([ "$GPU_VENDOR" = "other" ]  && echo ON || echo OFF) \
+    ) || GPU_CHOICE="$GPU_VENDOR"
+
+    GPU_VENDOR="${GPU_CHOICE:-$GPU_VENDOR}"
+    log "GPU seleccionada por el usuario: $GPU_VENDOR"
+
+    local XCONF_DIR="/etc/X11/xorg.conf.d"
+
+    case "$GPU_VENDOR" in
+
+        intel)
+            if yesno "Instalar drivers Intel?\n\n  Paquetes:\n    xf86-video-intel   -> Driver Xorg para Intel\n    mesa               -> OpenGL / Vulkan (open source)\n    intel-video-accel  -> Aceleracion de video VA-API\n    vulkan-loader      -> Loader Vulkan\n    mesa-vulkan-intel  -> Backend Vulkan Intel (ANV)\n\nRecomendado para graficos integrados Intel."; then
+                clear
+                log "Instalando drivers Intel..."
+                sudo xbps-install -Suy \
+                    xf86-video-intel \
+                    mesa \
+                    intel-video-accel \
+                    vulkan-loader \
+                    mesa-vulkan-intel 2>/dev/null || true
+
+                sudo mkdir -p "$XCONF_DIR"
+                if [ ! -f "$XCONF_DIR/20-intel.conf" ]; then
+                    sudo tee "$XCONF_DIR/20-intel.conf" > /dev/null << 'INTELCFG'
+Section "Device"
+    Identifier  "Intel Graphics"
+    Driver      "intel"
+    Option      "TearFree"    "true"
+    Option      "AccelMethod" "sna"
+EndSection
+INTELCFG
+                    log "  -> /etc/X11/xorg.conf.d/20-intel.conf creado"
+                fi
+
+                groups | grep -qw video || sudo usermod -aG video "$USER" 2>/dev/null || true
+                log "  -> Drivers Intel instalados"
+                msgbox "Drivers Intel instalados.\n\nArchivos creados:\n  /etc/X11/xorg.conf.d/20-intel.conf\n\nVerifica con:\n  glxinfo | grep renderer\n  vainfo"
+            fi
+            ;;
+
+        amd)
+            if yesno "Instalar drivers AMD / ATI?\n\n  Paquetes:\n    xf86-video-amdgpu  -> Driver Xorg moderno (GCN+)\n    mesa               -> OpenGL / Vulkan (open source)\n    mesa-vaapi         -> Aceleracion VA-API\n    mesa-vdpau         -> Aceleracion VDPAU\n    vulkan-loader      -> Loader Vulkan\n    mesa-vulkan-radeon -> Backend Vulkan AMD (RADV)\n\nRecomendado para Radeon HD 7000+ / RX series."; then
+                clear
+                log "Instalando drivers AMD..."
+                sudo xbps-install -Suy \
+                    xf86-video-amdgpu \
+                    mesa \
+                    mesa-vaapi \
+                    mesa-vdpau \
+                    vulkan-loader \
+                    mesa-vulkan-radeon 2>/dev/null || true
+
+                sudo mkdir -p "$XCONF_DIR"
+                if [ ! -f "$XCONF_DIR/20-amdgpu.conf" ]; then
+                    sudo tee "$XCONF_DIR/20-amdgpu.conf" > /dev/null << 'AMDCFG'
+Section "Device"
+    Identifier  "AMD Radeon"
+    Driver      "amdgpu"
+    Option      "TearFree"  "true"
+    Option      "DRI"       "3"
+EndSection
+AMDCFG
+                    log "  -> /etc/X11/xorg.conf.d/20-amdgpu.conf creado"
+                fi
+
+                groups | grep -qw video || sudo usermod -aG video "$USER" 2>/dev/null || true
+                log "  -> Drivers AMD instalados"
+                msgbox "Drivers AMD instalados.\n\nArchivos creados:\n  /etc/X11/xorg.conf.d/20-amdgpu.conf\n\nVerifica con:\n  glxinfo | grep renderer\n  vainfo\n  vdpauinfo"
+            fi
+            ;;
+
+        nvidia)
+            if yesno "Instalar drivers privativos NVIDIA?\n\n  Paquetes:\n    nvidia             -> Driver propietario (recomendado)\n    nvidia-libs        -> Librerias OpenGL 64-bit\n    nvidia-libs-32bit  -> Librerias 32-bit (Steam/Wine)\n    nvidia-dkms        -> Modulo DKMS para kernels custom\n\nRequiere void-repo-nonfree (se habilitara automaticamente)."; then
+                clear
+                log "Habilitando void-repo-nonfree para NVIDIA..."
+                sudo xbps-install -Suy void-repo-nonfree 2>/dev/null || true
+                sudo xbps-install -Suy 2>/dev/null || true
+
+                log "Instalando drivers NVIDIA privativos..."
+                local NVIDIA_PKGS=(nvidia nvidia-libs nvidia-libs-32bit)
+                if xbps-query -Rs linux-headers &>/dev/null 2>&1; then
+                    NVIDIA_PKGS+=(nvidia-dkms)
+                fi
+
+                sudo xbps-install -Suy "${NVIDIA_PKGS[@]}" 2>/dev/null || {
+                    log "  -> Error con paquete completo, intentando sin 32-bit..."
+                    sudo xbps-install -Suy nvidia nvidia-libs 2>/dev/null || true
+                }
+
+                sudo mkdir -p "$XCONF_DIR"
+                if [ ! -f "$XCONF_DIR/10-nvidia.conf" ]; then
+                    sudo tee "$XCONF_DIR/10-nvidia.conf" > /dev/null << 'NVIDIACFG'
+Section "Device"
+    Identifier "NVIDIA"
+    Driver     "nvidia"
+    Option     "NoLogo" "true"
+EndSection
+NVIDIACFG
+                    log "  -> /etc/X11/xorg.conf.d/10-nvidia.conf creado"
+                fi
+
+                if [ -d /etc/dracut.conf.d ]; then
+                    sudo tee /etc/dracut.conf.d/nvidia.conf > /dev/null << 'DRACFG'
+add_drivers+=" nvidia nvidia_modeset nvidia_uvm nvidia_drm "
+DRACFG
+                    log "  -> Modulos NVIDIA agregados a dracut"
+                fi
+
+                groups | grep -qw video || sudo usermod -aG video "$USER" 2>/dev/null || true
+                log "  -> Drivers NVIDIA instalados"
+                msgbox "Drivers NVIDIA instalados.\n\nArchivos creados:\n  /etc/X11/xorg.conf.d/10-nvidia.conf\n\nNota: reinicia para cargar el driver.\nVerifica con:\n  nvidia-smi\n  glxinfo | grep renderer"
+            fi
+            ;;
+
+        none|*)
+            log "Drivers de video: sin instalacion (omitido por el usuario)"
+            msgbox "Drivers de video omitidos.\nPuedes instalarlos manualmente cuando quieras."
             ;;
     esac
 }
@@ -1206,6 +1334,25 @@ install_express() {
         intel) EXTRA_UCODE=(linux-firmware-intel) ;;
     esac
 
+    # ── Seleccion interactiva de GPU (antes del gauge) ────────────────────
+    local gpu_label="No identificada"
+    [ "$GPU_VENDOR" = "intel" ]  && gpu_label="Intel Graphics (detectado)"
+    [ "$GPU_VENDOR" = "amd" ]    && gpu_label="AMD / Radeon (detectado)"
+    [ "$GPU_VENDOR" = "nvidia" ] && gpu_label="NVIDIA (detectado)"
+    [ "$GPU_VENDOR" = "other" ]  && gpu_label="No identificada / VM"
+
+    local GPU_EXPRESS_CHOICE
+    GPU_EXPRESS_CHOICE=$(radiolist_menu \
+        "Drivers de Video — Modo Express" \
+        "GPU detectada: $gpu_label\n\nSelecciona los drivers a instalar.\nSi usas maquina virtual elige 'Ninguno / VM':" \
+        "intel"  "Intel  (HD/UHD/Iris — xf86-video-intel + mesa)"  $([ "$GPU_VENDOR" = "intel" ]  && echo ON || echo OFF) \
+        "amd"    "AMD / ATI  (Radeon/RX — xf86-video-amdgpu + mesa)" $([ "$GPU_VENDOR" = "amd" ]  && echo ON || echo OFF) \
+        "nvidia" "NVIDIA  (drivers privativos, void-repo-nonfree)"   $([ "$GPU_VENDOR" = "nvidia" ] && echo ON || echo OFF) \
+        "none"   "Ninguno / VM  (sin driver especifico)"             $([ "$GPU_VENDOR" = "other" ]  && echo ON || echo OFF) \
+    ) || GPU_EXPRESS_CHOICE="${GPU_VENDOR:-none}"
+    GPU_EXPRESS_CHOICE="${GPU_EXPRESS_CHOICE:-none}"
+    log "GPU seleccionada en Express: $GPU_EXPRESS_CHOICE"
+
     # ── Archivos temporales ───────────────────────────────────────────────
     local GAUGE_PIPE ERR_LOG
     GAUGE_PIPE=$(mktemp -u /tmp/kde-gauge-XXXXXX)
@@ -1262,6 +1409,36 @@ install_express() {
 
     _gp 13 "Instalando drivers xorg..."
     _xbps xorg-input-drivers xorg-video-drivers
+
+    _gp 15 "Instalando drivers de video ($GPU_EXPRESS_CHOICE)..."
+    case "$GPU_EXPRESS_CHOICE" in
+        intel)
+            _xbps xf86-video-intel mesa intel-video-accel vulkan-loader mesa-vulkan-intel
+            ;;
+        amd)
+            _xbps xf86-video-amdgpu mesa mesa-vaapi mesa-vdpau vulkan-loader mesa-vulkan-radeon
+            ;;
+        nvidia)
+            # Asegurar nonfree habilitado
+            sudo xbps-install -Suy void-repo-nonfree >> "$ERR_LOG" 2>&1 || true
+            sudo xbps-install -Suy >> "$ERR_LOG" 2>&1 || true
+            _xbps nvidia nvidia-libs nvidia-libs-32bit
+            local XCONF_DIR_EXP="/etc/X11/xorg.conf.d"
+            sudo mkdir -p "$XCONF_DIR_EXP"
+            if [ ! -f "$XCONF_DIR_EXP/10-nvidia.conf" ]; then
+                sudo tee "$XCONF_DIR_EXP/10-nvidia.conf" > /dev/null << 'NVEXPRESS'
+Section "Device"
+    Identifier "NVIDIA"
+    Driver     "nvidia"
+    Option     "NoLogo" "true"
+EndSection
+NVEXPRESS
+            fi
+            ;;
+        none|*)
+            log "  -> Drivers de video omitidos (VM o eleccion del usuario)"
+            ;;
+    esac
 
     _gp 16 "Instalando utilidades X11..."
     _xbps xinput xrandr xset xsetroot xdpyinfo
@@ -1493,6 +1670,7 @@ main_menu() {
                 step_update
                 step_repos
                 step_hardware
+                step_gpu
                 step_base
                 step_xinput
                 step_audio
