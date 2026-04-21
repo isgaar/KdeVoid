@@ -1140,42 +1140,119 @@ step_timeshift() {
         return 0
     fi
 
-    # Elegir backend
+    # ── Instalar cronie (requerido por Timeshift para snapshots programados) ─
+    log "Instalando cronie (requerido por Timeshift)..."
+    sudo xbps-install -Suy cronie 2>/dev/null || true
+    enable_service cronie
+    log "  -> cronie instalado y habilitado en /var/service"
+
+    # ── Elegir backend ────────────────────────────────────────────────────
     local TS_BACKEND
     TS_BACKEND=$(radiolist_menu \
         "Timeshift — Tipo de Instantaneas" \
-        "Elige el metodo de snapshots:\n\nBTRFS requiere que / este formateado en BTRFS.\nrsync funciona con cualquier filesystem (ext4, xfs, etc)." \
-        "rsync" "rsync  -> Compatible con ext4, xfs, btrfs (recomendado)" ON \
-        "btrfs" "BTRFS  -> Snapshots nativos, mas rapido (solo en BTRFS)" OFF \
+        "Elige el metodo de snapshots:\n\nrsync  -> Recomendado para CUALQUIER filesystem (ext4, xfs, btrfs)\nbtrfs  -> Solo si tu / tiene subvolumenes @ y @home (Ubuntu-style)" \
+        "rsync" "rsync  -> Compatible con ext4, xfs, btrfs (RECOMENDADO)" ON \
+        "btrfs" "BTRFS  -> Solo con subvolumenes @ y @home" OFF \
     ) || TS_BACKEND="rsync"
     TS_BACKEND="${TS_BACKEND:-rsync}"
 
-    # Sugerir la mejor ruta disponible
-    local DEFAULT_PATH="/"
-    # Si hay /home en particion separada, recomendarlo para no saturar /
-    if mountpoint -q /home 2>/dev/null; then
-        DEFAULT_PATH="/home"
+    # ── Advertencia BTRFS sin estructura correcta ─────────────────────────
+    if [ "$TS_BACKEND" = "btrfs" ]; then
+        local BTRFS_OK=0
+        if command -v btrfs &>/dev/null; then
+            btrfs subvolume list / 2>/dev/null | grep -q "@$" && BTRFS_OK=1
+        fi
+        if [ "$BTRFS_OK" -eq 0 ]; then
+            whiptail --title "Advertencia BTRFS" --backtitle "$BACKTITLE" --msgbox \
+"ATENCION: No se detectaron subvolumenes @ y @home en tu sistema.
+
+Timeshift en modo BTRFS SOLO funciona con la estructura:
+  @      -> subvolumen raiz  (montado en /)
+  @home  -> subvolumen home  (montado en /home)
+
+Sin esa estructura Timeshift fallara al restaurar con el error:
+  'La particion tiene una estructura de subvolumen no compatible'
+
+Se recomienda FUERTEMENTE usar modo rsync en tu caso.
+Puedes cambiar el modo en Configuracion de Timeshift." \
+                16 66
+        fi
     fi
-    # Si hay disco extra montado, usarlo
-    for mnt in /mnt /data /backup /storage; do
+
+    # ── Detectar disco del sistema automaticamente ────────────────────────
+    # Obtener el dispositivo raiz real (resuelve LVM, dm, nvme, sda...)
+    local ROOT_DEV ROOT_DISK ROOT_UUID DISK_INFO
+
+    ROOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || lsblk -no PKNAME,MOUNTPOINT 2>/dev/null | awk '$2=="/" {print "/dev/"$1}' | head -1)
+
+    # Resolver symlinks (ej: /dev/disk/by-uuid/xxx -> /dev/sda2)
+    ROOT_DEV=$(readlink -f "$ROOT_DEV" 2>/dev/null || echo "$ROOT_DEV")
+
+    # Obtener el disco padre (quitar numero de particion)
+    # sda2 -> sda | nvme0n1p2 -> nvme0n1 | vda1 -> vda
+    ROOT_DISK=$(echo "$ROOT_DEV" | sed 's/p\?[0-9]\+$//' 2>/dev/null || echo "$ROOT_DEV")
+
+    # UUID de la particion raiz
+    ROOT_UUID=$(blkid -s UUID -o value "$ROOT_DEV" 2>/dev/null || \
+                lsblk -no UUID "$ROOT_DEV" 2>/dev/null | head -1 || echo "")
+
+    log "  -> Disco detectado: $ROOT_DISK  Particion: $ROOT_DEV  UUID: ${ROOT_UUID:-desconocido}"
+
+    # ── Construir lista de discos para mostrar al usuario ─────────────────
+    DISK_INFO=$(lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE 2>/dev/null \
+        | grep -v "^loop\|^rom" \
+        | head -20 || echo "  (no se pudo listar)")
+
+    # ── Permitir al usuario confirmar o cambiar el disco ─────────────────
+    local DISK_CHOICE
+    DISK_CHOICE=$(whiptail --title "Timeshift — Dispositivo de Snapshots" \
+        --backtitle "$BACKTITLE" \
+        --inputbox \
+"Dispositivo detectado para snapshots:  $ROOT_DEV
+UUID:  ${ROOT_UUID:-no detectado}
+Disco padre:  $ROOT_DISK
+
+Discos disponibles en el sistema:
+$DISK_INFO
+
+Confirma o escribe el dispositivo correcto
+(ej: /dev/sda2, /dev/sdb1, /dev/nvme0n1p2):" \
+        22 72 "$ROOT_DEV" \
+        3>&1 1>&2 2>&3) || DISK_CHOICE="$ROOT_DEV"
+
+    DISK_CHOICE="${DISK_CHOICE:-$ROOT_DEV}"
+
+    # Re-obtener UUID si el usuario cambio el dispositivo
+    if [ "$DISK_CHOICE" != "$ROOT_DEV" ]; then
+        ROOT_UUID=$(blkid -s UUID -o value "$DISK_CHOICE" 2>/dev/null || \
+                    lsblk -no UUID "$DISK_CHOICE" 2>/dev/null | head -1 || echo "")
+        log "  -> Usuario cambio dispositivo a: $DISK_CHOICE  UUID: ${ROOT_UUID:-desconocido}"
+    fi
+
+    # UUID del disco padre (para parent_device_uuid)
+    local PARENT_UUID
+    PARENT_UUID=$(blkid -s UUID -o value "$(echo "$DISK_CHOICE" | sed 's/p\?[0-9]\+$//')" 2>/dev/null || echo "")
+
+    # ── Ruta de snapshots ─────────────────────────────────────────────────
+    local DEFAULT_PATH="/"
+    for mnt in /mnt /data /backup /storage /home; do
         if mountpoint -q "$mnt" 2>/dev/null; then
             DEFAULT_PATH="$mnt"
             break
         fi
     done
 
-    # Mostrar particiones disponibles para que el usuario elija bien
     local PARTITIONS_INFO
     PARTITIONS_INFO=$(df -h --output=target,size,avail,pcent 2>/dev/null \
         | grep -v "tmpfs\|udev\|/boot\|/run\|Filesystem" \
         | awk '{printf "  %-20s tam:%-6s libre:%-6s uso:%s\n", $1,$2,$3,$4}' \
-        | head -8 || echo "  (no se pudieron listar las particiones)")
+        | head -8 || echo "  (no se pudieron listar)")
 
     local SNAP_PATH
     SNAP_PATH=$(whiptail --title "Timeshift — Ruta de Instantaneas" \
         --backtitle "$BACKTITLE" \
         --inputbox \
-"Ruta donde se guardaran las instantaneas del sistema.
+"Ruta donde se guardaran las instantaneas.
 
 Recomendacion: usa una particion separada o disco externo.
 Espacio recomendado: 20-50 GB libres minimo.
@@ -1186,17 +1263,14 @@ $PARTITIONS_INFO
 Ruta (puedes escribir cualquier ruta existente):" \
         20 68 "$DEFAULT_PATH" \
         3>&1 1>&2 2>&3) || SNAP_PATH="$DEFAULT_PATH"
-
     SNAP_PATH="${SNAP_PATH:-$DEFAULT_PATH}"
 
-    # Crear el directorio si no existe
     if [ ! -d "$SNAP_PATH" ]; then
         if yesno "La ruta '$SNAP_PATH' no existe.\nDeseas crearla ahora?"; then
             sudo mkdir -p "$SNAP_PATH"
             log "  -> Directorio creado: $SNAP_PATH"
         else
             SNAP_PATH="/"
-            log "  -> Usando / como ruta de snapshots"
         fi
     fi
 
@@ -1209,9 +1283,9 @@ Ruta (puedes escribir cualquier ruta existente):" \
             10 62
     fi
 
-    # Instalar Timeshift
+    # ── Instalar Timeshift ────────────────────────────────────────────────
     clear
-    log "Instalando Timeshift (backend=$TS_BACKEND, ruta=$SNAP_PATH)..."
+    log "Instalando Timeshift (backend=$TS_BACKEND, disco=$DISK_CHOICE, uuid=${ROOT_UUID:-?})..."
     sudo xbps-install -Suy timeshift 2>/dev/null || {
         log "  -> timeshift no encontrado en repos estandar."
         if [ "$TS_BACKEND" = "btrfs" ]; then
@@ -1220,35 +1294,35 @@ Ruta (puedes escribir cualquier ruta existente):" \
         fi
     }
 
-    # Crear estructura de directorios de snapshots
+    # ── Estructura de directorios ─────────────────────────────────────────
     local TIMESHIFT_DIR="$SNAP_PATH/timeshift"
     local SNAP_DIR="$TIMESHIFT_DIR/snapshots"
     sudo mkdir -p "$SNAP_DIR"
     sudo chmod 700 "$TIMESHIFT_DIR"
     log "  -> Estructura creada: $SNAP_DIR"
 
-    # Escribir configuracion base de Timeshift
+    # ── Escribir timeshift.json con UUID real del disco ───────────────────
     local TS_CONF_DIR="/etc/timeshift"
     sudo mkdir -p "$TS_CONF_DIR"
     sudo tee "$TS_CONF_DIR/timeshift.json" > /dev/null << EOF
 {
-  "backup_device_uuid" : "",
-  "parent_device_uuid" : "",
+  "backup_device_uuid" : "${ROOT_UUID}",
+  "parent_device_uuid" : "${PARENT_UUID}",
   "do_first_run_checks" : "false",
   "btrfs_mode" : "$([ "$TS_BACKEND" = "btrfs" ] && echo true || echo false)",
   "include_btrfs_home_for_backup" : "false",
   "stop_cron_emails" : "true",
   "schedule_monthly" : "false",
-  "schedule_weekly" : "true",
-  "schedule_daily" : "true",
-  "schedule_hourly" : "false",
-  "schedule_boot" : "true",
+  "schedule_weekly"  : "true",
+  "schedule_daily"   : "true",
+  "schedule_hourly"  : "false",
+  "schedule_boot"    : "true",
   "count_monthly" : "2",
-  "count_weekly" : "3",
-  "count_daily" : "5",
-  "count_hourly" : "6",
-  "count_boot" : "5",
-  "snapshot_size" : "0",
+  "count_weekly"  : "3",
+  "count_daily"   : "5",
+  "count_hourly"  : "6",
+  "count_boot"    : "5",
+  "snapshot_size"  : "0",
   "snapshot_count" : "0",
   "exclude" : [
     "+/root/***",
@@ -1265,9 +1339,9 @@ Ruta (puedes escribir cualquier ruta existente):" \
   "exclude-apps" : []
 }
 EOF
-    log "  -> Configuracion guardada en $TS_CONF_DIR/timeshift.json"
+    log "  -> /etc/timeshift/timeshift.json escrito con UUID: ${ROOT_UUID:-vacio}"
 
-    msgbox "Timeshift instalado correctamente.\n\nConfiguracion:\n  Backend:          $TS_BACKEND\n  Ruta snapshots:   $SNAP_PATH/timeshift/snapshots\n  Diarios:          5 snapshots\n  Semanales:        3 snapshots\n  Al inicio:        5 snapshots\n\nAbre Timeshift desde el menu de aplicaciones\npara seleccionar el dispositivo de destino\ny crear el primer snapshot manualmente."
+    msgbox "Timeshift instalado correctamente.\n\nConfiguracion aplicada:\n  Backend:    $TS_BACKEND\n  Disco:      $DISK_CHOICE\n  UUID:       ${ROOT_UUID:-no detectado}\n  Snapshots:  $SNAP_PATH/timeshift/snapshots\n  Diarios:    5  |  Semanales: 3  |  Al inicio: 5\n  cronie:     habilitado (snapshots programados)\n\nAbre Timeshift para crear el primer snapshot manualmente.\nSi ves error de subvolumen, usa modo rsync en Configuracion."
 }
 
 # ─────────────────────────── PASO 12: PIM ────────────────────────────────
@@ -1542,12 +1616,16 @@ NVEXPRESS
     sudo xbps-install -Suy discover >> "$ERR_LOG" 2>&1 || \
         printf '[ERROR %s] No se pudo instalar discover\n' "$(date '+%H:%M:%S')" >> "$ERR_LOG"
 
-    _gp 82 "Instalando TLP (ahorro de energia)..."
+    _gp 82 "Instalando TLP y cronie..."
     _xbps tlp tlp-rdw tlp-pd
+    sudo xbps-install -Suy cronie >> "$ERR_LOG" 2>&1 || true
 
     _gp 90 "Habilitando servicios..."
     enable_service dbus
     enable_service NetworkManager
+    # cronie (requerido por Timeshift para snapshots programados)
+    enable_service cronie
+    log "  -> cronie habilitado en /var/service"
     # TLP en Void Linux se habilita via runit
     if command -v tlp &>/dev/null; then
         enable_service tlp
