@@ -1522,7 +1522,7 @@ NVEXPRESS
     _xbps kdeconnect kcalc kdegraphics-thumbnailers ffmpegthumbs
 
     _gp 77 "Instalando kwrite, Discover y utilidades..."
-    _xbps kwrite vlc discover packagekit-qt5
+    _xbps kwrite vlc discover packagekit-qt5 flatpak-kcm
 
     _gp 82 "Instalando TLP (ahorro de energia)..."
     _xbps tlp tlp-rdw tlp-pd
