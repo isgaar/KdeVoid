@@ -422,68 +422,50 @@ step_shell_env() {
 
     # ── Contenido de .bashrc ──────────────────────────────────────────────
     local BASHRC_CONTENT
-    BASHRC_CONTENT='# ~/.bashrc — Configurado por kde-void-installer
-# Basado en la config de Ismael para openSUSE / Void Linux
+    BASHRC_CONTENT='# Sample .bashrc for SUSE Linux
+# Copyright (c) SUSE Software Solutions Germany GmbH
 
-# Salir si no es interactivo
-[[ $- != *i* ]] && return
+# There are 3 different types of shells in bash: the login shell, normal shell
+# and interactive shell. Login shells read ~/.profile and interactive shells
+# read ~/.bashrc; in our setup, /etc/profile sources ~/.bashrc - thus all
+# settings made here will also take effect in a login shell.
 
-# ── Prompt estilo Debian con verde openSUSE ──────────────────────────────
+# NOTE: It is recommended to make language settings in ~/.profile rather than
+# here, since multilingual X sessions would not work properly if LANG is over-
+# ridden in every subshell.
+
+# Prompt estilo Debian con verde openSUSE
 PS1='"'"'\[\e[38;5;112m\]\u@\h\[\e[0m\]:\[\e[38;5;33m\]\w\[\e[0m\]\$ '"'"'
 
-# ── Alias utiles ─────────────────────────────────────────────────────────
-alias ls='"'"'ls --color=auto'"'"'
-alias ll='"'"'ls -lah --color=auto'"'"'
-alias la='"'"'ls -A --color=auto'"'"'
-alias grep='"'"'grep --color=auto'"'"'
-alias xin='"'"'sudo xbps-install -Suy'"'"'
-alias xrm='"'"'sudo xbps-remove -R'"'"'
-alias xup='"'"'sudo xbps-install -Suy'"'"'
-alias xq='"'"'xbps-query -Rs'"'"'
-
-# ── Historial mejorado ───────────────────────────────────────────────────
-HISTSIZE=5000
-HISTFILESIZE=10000
-HISTCONTROL=ignoreboth:erasedups
-shopt -s histappend
-shopt -s checkwinsize
-
-# ── Alias de sistema ─────────────────────────────────────────────────────
 test -s ~/.alias && . ~/.alias || true
 
-# ── Fastfetch al iniciar terminal ────────────────────────────────────────
-if command -v fastfetch &>/dev/null; then
-    fastfetch
-fi'
+fastfetch'
 
     # ── Contenido de .inputrc ─────────────────────────────────────────────
     local INPUTRC_CONTENT
-    INPUTRC_CONTENT='# ~/.inputrc — Configurado por kde-void-installer
+    INPUTRC_CONTENT='################################################################################
+## ~/.inputrc
+##
+## Control the behaviour of the readline library used e.g.
+## by the bash in the interactive mode for line editing.
+##
+################################################################################
 
-# Sin campanilla
-set bell-style none
+# The bell style used e.g. on error or tab completion, possible values
+# are `none'"'"', `visible'"'"', and `audible'"'"' the ringing the bell.
+#
+#set bell-style none
 
-# Mostrar completaciones inmediatamente si hay ambiguedad
-set show-all-if-ambiguous on
-set show-all-if-unmodified on
+# If set to on, words which have more than one possible completion without
+# any possible partial completion cause the matches to be listed immediately
+# instead of ringing the bell.
+#
+#set show-all-if-unmodified on
 
-# Completacion sin distinguir mayusculas/minusculas
-set completion-ignore-case on
-
-# Colorear completaciones de archivos
-set colored-stats on
-set colored-completion-prefix on
-
-# Mostrar caracteres especiales al final (/ para directorios, etc.)
-set visible-stats on
-
-# Historial con flechas arriba/abajo filtrando por lo ya escrito
-"\e[A": history-search-backward
-"\e[B": history-search-forward
-
-# Ctrl+flechas para moverse por palabras
-"\e[1;5C": forward-word
-"\e[1;5D": backward-word
+# If set to on, words which have more than one possible completion cause the
+# matches to be listed immediately instead of ringing the bell.
+#
+#set show-all-if-ambiguous on
 
 # end'
 
