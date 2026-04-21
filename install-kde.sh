@@ -1061,13 +1061,21 @@ step_power() {
 
     # Habilitar TLP, deshabilitar power-profiles-daemon (incompatible)
     if [[ " ${SELECTED[*]} " == *" tlp "* ]]; then
-        # TLP no usa runit en Void; se activa via udev al reiniciar
-        log "  -> TLP instalado. Se activara automaticamente al reiniciar."
+        enable_service tlp
+        log "  -> tlp habilitado en /var/service"
         if [ -e "/var/service/power-profiles-daemon" ]; then
             log "  -> Deshabilitando power-profiles-daemon (incompatible con TLP)..."
             sudo rm -f /var/service/power-profiles-daemon
         fi
-        log "  -> TLP habilitado"
+    fi
+
+    if [[ " ${SELECTED[*]} " == *" tlp-pd "* ]]; then
+        if [ -d /etc/sv/tlp-pd ]; then
+            enable_service tlp-pd
+            log "  -> tlp-pd habilitado en /var/service"
+        else
+            log "  -> tlp-pd instalado (sin servicio runit propio, se activa con tlp)"
+        fi
     fi
 
     if [[ " ${SELECTED[*]} " == *" acpid "* ]]; then
@@ -1503,8 +1511,12 @@ NVEXPRESS
     _gp 74 "Instalando miniaturas y extras..."
     _xbps kdeconnect kcalc kdegraphics-thumbnailers ffmpegthumbs
 
-    _gp 77 "Instalando kwrite, Discover y utilidades..."
-    _xbps kwrite vlc discover packagekit-qt5 flatpak-kcm
+    _gp 77 "Instalando kwrite y utilidades..."
+    _xbps kwrite vlc packagekit-qt5 flatpak-kcm
+
+    _gp 79 "Instalando KDE Discover (tienda de apps)..."
+    sudo xbps-install -Suy discover >> "$ERR_LOG" 2>&1 || \
+        printf '[ERROR %s] No se pudo instalar discover\n' "$(date '+%H:%M:%S')" >> "$ERR_LOG"
 
     _gp 82 "Instalando TLP (ahorro de energia)..."
     _xbps tlp tlp-rdw tlp-pd
@@ -1512,11 +1524,19 @@ NVEXPRESS
     _gp 90 "Habilitando servicios..."
     enable_service dbus
     enable_service NetworkManager
-    # TLP en Void Linux no usa runit service; se activa via udev automaticamente
-    # tras reiniciar. Solo verificar que este instalado.
+    # TLP en Void Linux se habilita via runit
     if command -v tlp &>/dev/null; then
-        log "  -> TLP instalado (se activara al reiniciar via udev)"
+        enable_service tlp
+        log "  -> tlp habilitado en /var/service"
     fi
+    # tlp-pd (power-profiles-daemon bridge para TLP)
+    if [ -d /etc/sv/tlp-pd ]; then
+        enable_service tlp-pd
+        log "  -> tlp-pd habilitado en /var/service"
+    fi
+    # Deshabilitar power-profiles-daemon si existe (incompatible con TLP)
+    [ -e "/var/service/power-profiles-daemon" ] && \
+        sudo rm -f /var/service/power-profiles-daemon || true
     enable_service sddm
 
     _gp 95 "Creando configuraciones..."
