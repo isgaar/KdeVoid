@@ -130,6 +130,7 @@ do_zram() {
 options zram num_devices=1
 EOF
 
+    sudo mkdir -p /etc/udev/rules.d
     sudo tee /etc/udev/rules.d/99-zram.rules > /dev/null << EOF
 KERNEL=="zram0", ATTR{disksize}="${ZRAM_SIZE_MB}M", ATTR{comp_algorithm}="lz4", RUN+="/sbin/mkswap /dev/zram0", RUN+="/sbin/swapon -p 100 /dev/zram0"
 EOF
@@ -173,6 +174,7 @@ do_irqbalance() {
 
 do_sysctl() {
     log "─── [5/8] sysctl — parametros kernel para desktop AMD/NVMe ───"
+    sudo mkdir -p /etc/sysctl.d
     sudo tee /etc/sysctl.d/99-desktop-performance.conf > /dev/null << 'EOF'
 # ── Optimizacion KDE Void Linux — Ryzen + NVMe + 16GB ──────────────────
 
@@ -214,6 +216,7 @@ do_io_scheduler() {
 
     log "─── [6/8] I/O scheduler — $IO_SCHED para $ROOT_DEV ($DISK_TYPE) ───"
 
+    sudo mkdir -p /etc/udev/rules.d
     sudo tee /etc/udev/rules.d/60-io-scheduler.rules > /dev/null << 'EOF'
 # I/O scheduler optimo segun tipo de disco
 # NVMe → none | SSD SATA → mq-deadline | HDD → bfq
@@ -231,6 +234,7 @@ EOF
 do_cpu_governor() {
     log "─── [7/8] CPU governor — schedutil (optimo para Ryzen boost) ───"
 
+    sudo mkdir -p /etc/udev/rules.d
     sudo tee /etc/udev/rules.d/50-cpu-governor.rules > /dev/null << 'EOF'
 # schedutil: governor reactivo via scheduler del kernel
 # Ideal para Ryzen con Precision Boost automatico
@@ -257,6 +261,7 @@ do_flathub_mirror() {
     sudo flatpak remote-modify flathub \
         --url=https://dl.flathub.org/repo/ 2>/dev/null || true
 
+    sudo mkdir -p /etc/flatpak/installations.d
     sudo mkdir -p /etc/flatpak/installations.d
     sudo tee /etc/flatpak/installations.d/default.conf > /dev/null << 'EOF'
 [Installation "default"]
