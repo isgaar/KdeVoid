@@ -1587,6 +1587,131 @@ step_extra() {
     msgbox "Extras instalados correctamente."
 }
 
+# ─────────────────────────── Tema SDDM: breeze-void ─────────────────────
+#
+# Estrategia: copiar el tema Breeze real instalado por el paquete KDE y
+# parchear solo theme.conf (fondo, colores). De esta forma los QML
+# originales resuelven sus imports de org.kde.breeze.components sin fallar.
+# Se llama desde install_express (automático) y desde step_sddm_theme.
+#
+_find_breeze_theme() {
+    # Busca el directorio del tema Breeze estándar instalado por el paquete
+    local candidates=(
+        /usr/share/sddm/themes/breeze
+        /usr/share/sddm/themes/Breeze
+        /usr/lib/sddm/themes/breeze
+        /usr/lib/sddm/themes/Breeze
+    )
+    for d in "${candidates[@]}"; do
+        [ -d "$d" ] && { echo "$d"; return 0; }
+    done
+    return 1
+}
+
+setup_sddm_theme() {
+    local THEME_DIR="/usr/share/sddm/themes/breeze-void"
+    local SDDM_CONF_DIR="/usr/lib/sddm/sddm.conf.d"
+
+    sudo mkdir -p "$SDDM_CONF_DIR"
+
+    # ── Localizar el tema Breeze base ─────────────────────────────────────
+    local BREEZE_SRC
+    if ! BREEZE_SRC=$(_find_breeze_theme); then
+        # No está instalado aún — instalar el paquete sddm-theme-breeze si existe,
+        # o usar plasma-theme-breeze como fallback
+        log "  -> Tema Breeze no encontrado, intentando instalar sddm-theme-breeze..."
+        sudo xbps-install -Suy sddm-theme-breeze 2>/dev/null || \
+        sudo xbps-install -Suy plasma-theme-breeze 2>/dev/null || true
+        BREEZE_SRC=$(_find_breeze_theme) || {
+            log "  -> WARN: no se encontró el tema Breeze base; se usará theme.conf sobre breeze."
+            # Configurar directamente el tema 'breeze' que el paquete kde5/kde-plasma instala
+            sudo tee "$SDDM_CONF_DIR/10-breeze-void.conf" > /dev/null << 'SDDMCONF'
+[Theme]
+Current=breeze
+CursorTheme=breeze_cursors
+SDDMCONF
+            sudo rm -f "$SDDM_CONF_DIR/10-theme.conf" \
+                       "$SDDM_CONF_DIR/20-breeze-openSUSE.conf" 2>/dev/null || true
+            log "  -> SDDM configurado para usar el tema 'breeze' instalado."
+            return 0
+        }
+    fi
+
+    log "  -> Tema Breeze base encontrado en: $BREEZE_SRC"
+    log "  -> Copiando a $THEME_DIR ..."
+
+    # ── Copiar el tema Breeze completo ────────────────────────────────────
+    sudo rm -rf "$THEME_DIR"
+    sudo cp -r "$BREEZE_SRC" "$THEME_DIR"
+    sudo mkdir -p "$THEME_DIR/faces"
+
+    # ── Parchear metadata.desktop (nombre sin referencias a otras distros) ─
+    sudo tee "$THEME_DIR/metadata.desktop" > /dev/null << 'METADATA'
+[SddmGreeterTheme]
+Name=Breeze Void
+Description=Tema SDDM Breeze para Void Linux
+Author=kde-void-installer
+License=LGPL-2.0-or-later
+Type=sddm-theme
+Version=1.0
+Website=https://github.com/isgaar/KdeVoid
+METADATA
+
+    # ── Parchear theme.conf: fondo azul oscuro, reloj visible ─────────────
+    # Leemos el theme.conf original para conservar claves que no tocamos
+    # y sobreescribimos solo las relevantes.
+    sudo tee "$THEME_DIR/theme.conf" > /dev/null << 'THEMECONF'
+[General]
+background=
+color=#0d1117
+type=color
+showClock=true
+showlogo=hidden
+fontSize=10
+THEMECONF
+
+    # Si existe theme.conf.user lo eliminamos para que no lo sobreescriba
+    sudo rm -f "$THEME_DIR/theme.conf.user" 2>/dev/null || true
+
+    # ── Activar el tema en SDDM ───────────────────────────────────────────
+    sudo tee "$SDDM_CONF_DIR/10-breeze-void.conf" > /dev/null << 'SDDMCONF'
+[Theme]
+Current=breeze-void
+CursorTheme=breeze_cursors
+SDDMCONF
+
+    # Eliminar configs anteriores que puedan sobreescribir el tema
+    sudo rm -f "$SDDM_CONF_DIR/10-theme.conf" \
+               "$SDDM_CONF_DIR/20-breeze-openSUSE.conf" 2>/dev/null || true
+
+    log "  -> Tema breeze-void instalado y activado (base: $BREEZE_SRC)."
+}
+
+# ─────────────────────────── PASO: Tema SDDM (interactivo) ───────────────
+
+step_sddm_theme() {
+    if ! yesno "Instalar tema SDDM personalizado (breeze-void)?\n\nCopia el tema Breeze de KDE y aplica:\n  - Fondo: negro azulado oscuro (#0d1117)\n  - Reloj visible sobre el panel de login\n  - Mismos QML/animaciones que el Breeze original\n  - Sin referencias a otras distribuciones\n\nEl tema se instala en:\n  /usr/share/sddm/themes/breeze-void\n\nY se activa automaticamente como tema por defecto."; then
+        log "Tema SDDM omitido por el usuario."
+        return 0
+    fi
+
+    clear
+    log "Instalando tema SDDM breeze-void..."
+    if setup_sddm_theme; then
+        msgbox "Tema SDDM breeze-void instalado.\n\n  Ubicacion:  /usr/share/sddm/themes/breeze-void\n  Config:     /usr/lib/sddm/sddm.conf.d/10-breeze-void.conf\n\nEl tema se aplicara en el proximo reinicio.\nPuedes cambiarlo desde:\n  Configuracion del sistema → Pantalla de inicio de sesion (SDDM)"
+    else
+        msgbox "Error al instalar el tema SDDM.\nRevisa el log:\n  $LOGFILE"
+    fi
+}
+
+# ─── (placeholder eliminado — bloque reescrito arriba) ──────────────────
+# El Main.qml NO se genera desde el script: se usa el del paquete Breeze
+# instalado por xbps para garantizar que los imports QML resuelvan.
+# ─────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────── zram: lógica central ────────────────────────
+# (sección de tema SDDM completamente reescrita arriba — sin Main.qml embebido)
+#
 # ─────────────────────────── zram: lógica central ────────────────────────
 #
 # Configura zram swap (activa ahora + persiste via runit)
@@ -2010,6 +2135,11 @@ NVEXPRESS
         sudo rm -f /var/service/power-profiles-daemon || true
     enable_service sddm
 
+    _gp 93 "Instalando tema SDDM breeze-void..."
+    setup_sddm_theme >> "$ERR_LOG" 2>&1 || \
+        printf '[WARN %s] No se pudo instalar el tema SDDM breeze-void\n' \
+            "$(date '+%H:%M:%S')" >> "$ERR_LOG"
+
     _gp 95 "Creando configuraciones..."
     if [ ! -f "$HOME/.xinitrc" ]; then
         printf '#!/bin/sh\nexec startplasma-x11\n' > "$HOME/.xinitrc"
@@ -2132,7 +2262,7 @@ main_menu() {
 
         case "$CHOICE" in
             1)
-                if yesno "Modo Express instalara:\n\n  xorg + xinit + xinput + libinput\n  Microcódigo CPU (AMD/Intel auto-detectado)\n  PipeWire (audio)\n  KDE Plasma 6 + apps esenciales\n  TLP (ahorro de energia)\n  zram swap (RAM comprimida, lz4)\n  SDDM (gestor de sesion)\n  curl + cabextract\n  Fuentes Noto CJK (japonés/chino/coreano)\n  Fuentes MS Core (Arial, Times New Roman...)\n\nDeseas continuar?"; then
+                if yesno "Modo Express instalara:\n\n  xorg + xinit + xinput + libinput\n  Microcódigo CPU (AMD/Intel auto-detectado)\n  PipeWire (audio)\n  KDE Plasma 6 + apps esenciales\n  TLP (ahorro de energia)\n  zram swap (RAM comprimida, lz4)\n  SDDM (gestor de sesion) + tema breeze-void\n  curl + cabextract\n  Fuentes Noto CJK (japonés/chino/coreano)\n  Fuentes MS Core (Arial, Times New Roman...)\n\nDeseas continuar?"; then
                     detect_hardware
                     step_update
                     step_repos
@@ -2148,6 +2278,7 @@ main_menu() {
                 step_xinput
                 step_audio
                 step_plasma_core
+                step_sddm_theme
                 step_plasma_apps
                 step_plasma_optional
                 step_power
