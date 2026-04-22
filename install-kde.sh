@@ -493,6 +493,9 @@ fastfetch'
 #
 #set show-all-if-ambiguous on
 
+# Tab completion sin distinguir mayusculas/minusculas
+set completion-ignore-case on
+
 # end'
 
     # ── Aplicar a /etc/skel (nuevos usuarios) ─────────────────────────────
