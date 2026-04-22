@@ -21,7 +21,6 @@ ZRAM_SIZE_MB=$(( TOTAL_RAM_MB / 2 ))
 [ "$ZRAM_SIZE_MB" -gt 4096 ] && ZRAM_SIZE_MB=4096
 [ "$ZRAM_SIZE_MB" -lt 512  ] && ZRAM_SIZE_MB=512
 
-# Swappiness adaptativo
 SWAPPINESS=10
 [ "$TOTAL_RAM_MB" -lt 8192 ] && SWAPPINESS=20
 [ "$TOTAL_RAM_MB" -lt 4096 ] && SWAPPINESS=35
@@ -38,8 +37,35 @@ if swapon --show 2>/dev/null | grep -q "^/dev/zram"; then
     exit 0
 fi
 
-# ── 1. Carga del módulo al arranque ───────────────────────────────────────
-echo -e "${CYAN}→${RESET} Configurando carga automatica del modulo..."
+# ── 1. Limpiar estado anterior del módulo ────────────────────────────────
+echo -e "${CYAN}→${RESET} Limpiando estado anterior de zram..."
+sudo swapoff /dev/zram0 2>/dev/null || true
+sudo rmmod zram 2>/dev/null || true
+sleep 1
+
+# ── 2. Carga limpia del módulo ────────────────────────────────────────────
+echo -e "${CYAN}→${RESET} Cargando modulo zram..."
+sudo modprobe zram num_devices=1 || {
+    echo -e "${RED}Error: no se pudo cargar el modulo zram.${RESET}"
+    exit 1
+}
+sleep 1
+
+if [ ! -b /dev/zram0 ]; then
+    echo -e "${RED}Error: /dev/zram0 no aparecio tras modprobe.${RESET}"
+    exit 1
+fi
+
+# ── 3. Configurar y activar zram0 ────────────────────────────────────────
+echo -e "${CYAN}→${RESET} Configurando zram0..."
+echo lz4 | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+echo "${ZRAM_SIZE_MB}M" | sudo tee /sys/block/zram0/disksize > /dev/null
+sudo mkswap /dev/zram0
+sudo swapon -p 100 /dev/zram0
+
+# ── 4. Persistencia al arranque ───────────────────────────────────────────
+echo -e "${CYAN}→${RESET} Configurando persistencia..."
+
 sudo mkdir -p /etc/modules-load.d
 echo "zram" | sudo tee /etc/modules-load.d/zram.conf > /dev/null
 
@@ -48,38 +74,12 @@ sudo tee /etc/modprobe.d/zram.conf > /dev/null << 'EOF'
 options zram num_devices=1
 EOF
 
-# ── 2. Regla udev para activar zram0 en cada arranque ────────────────────
-echo -e "${CYAN}→${RESET} Escribiendo regla udev..."
 sudo mkdir -p /etc/udev/rules.d
 sudo tee /etc/udev/rules.d/99-zram.rules > /dev/null << EOF
 KERNEL=="zram0", ATTR{disksize}="${ZRAM_SIZE_MB}M", ATTR{comp_algorithm}="lz4", RUN+="/sbin/mkswap /dev/zram0", RUN+="/sbin/swapon -p 100 /dev/zram0"
 EOF
 
-# ── 3. Activar ahora mismo sin reiniciar ─────────────────────────────────
-echo -e "${CYAN}→${RESET} Cargando modulo zram..."
-sudo modprobe zram num_devices=1 2>/dev/null || {
-    echo -e "${RED}Error: no se pudo cargar el modulo zram.${RESET}"
-    echo "Verifica con: modinfo zram"
-    exit 1
-}
-
-sleep 1
-
-if [ ! -b /dev/zram0 ]; then
-    echo -e "${RED}Error: /dev/zram0 no aparecio tras modprobe.${RESET}"
-    echo "Reinicia el sistema — quedara activo automaticamente."
-    exit 1
-fi
-
-echo -e "${CYAN}→${RESET} Configurando zram0..."
-sudo swapoff /dev/zram0 2>/dev/null || true
-echo 1   | sudo tee /sys/block/zram0/reset          > /dev/null 2>&1 || true
-echo lz4 | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
-echo "${ZRAM_SIZE_MB}M" | sudo tee /sys/block/zram0/disksize > /dev/null
-sudo mkswap /dev/zram0
-sudo swapon -p 100 /dev/zram0
-
-# ── 4. sysctl ─────────────────────────────────────────────────────────────
+# ── 5. sysctl ─────────────────────────────────────────────────────────────
 echo -e "${CYAN}→${RESET} Aplicando sysctl de memoria..."
 sudo mkdir -p /etc/sysctl.d
 sudo tee /etc/sysctl.d/99-zram-memory.conf > /dev/null << EOF
