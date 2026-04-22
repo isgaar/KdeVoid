@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup-zram.sh — Configura zram swap (activa ahora + persiste al arranque)
+# setup-zram.sh — Configura zram swap (activa ahora + persiste via runit)
 # Void Linux / AMD Ryzen
 
 set -euo pipefail
@@ -37,35 +37,8 @@ if swapon --show 2>/dev/null | grep -q "^/dev/zram"; then
     exit 0
 fi
 
-# ── 1. Limpiar estado anterior del módulo ────────────────────────────────
-echo -e "${CYAN}→${RESET} Limpiando estado anterior de zram..."
-sudo swapoff /dev/zram0 2>/dev/null || true
-sudo rmmod zram 2>/dev/null || true
-sleep 1
-
-# ── 2. Carga limpia del módulo ────────────────────────────────────────────
-echo -e "${CYAN}→${RESET} Cargando modulo zram..."
-sudo modprobe zram num_devices=1 || {
-    echo -e "${RED}Error: no se pudo cargar el modulo zram.${RESET}"
-    exit 1
-}
-sleep 1
-
-if [ ! -b /dev/zram0 ]; then
-    echo -e "${RED}Error: /dev/zram0 no aparecio tras modprobe.${RESET}"
-    exit 1
-fi
-
-# ── 3. Configurar y activar zram0 ────────────────────────────────────────
-echo -e "${CYAN}→${RESET} Configurando zram0..."
-echo lz4 | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
-echo "${ZRAM_SIZE_MB}M" | sudo tee /sys/block/zram0/disksize > /dev/null
-sudo mkswap /dev/zram0
-sudo swapon -p 100 /dev/zram0
-
-# ── 4. Persistencia al arranque ───────────────────────────────────────────
-echo -e "${CYAN}→${RESET} Configurando persistencia..."
-
+# ── 1. modules-load.d para cargar zram al arranque ───────────────────────
+echo -e "${CYAN}→${RESET} Configurando carga automatica del modulo..."
 sudo mkdir -p /etc/modules-load.d
 echo "zram" | sudo tee /etc/modules-load.d/zram.conf > /dev/null
 
@@ -74,10 +47,69 @@ sudo tee /etc/modprobe.d/zram.conf > /dev/null << 'EOF'
 options zram num_devices=1
 EOF
 
-sudo mkdir -p /etc/udev/rules.d
-sudo tee /etc/udev/rules.d/99-zram.rules > /dev/null << EOF
-KERNEL=="zram0", ATTR{disksize}="${ZRAM_SIZE_MB}M", ATTR{comp_algorithm}="lz4", RUN+="/sbin/mkswap /dev/zram0", RUN+="/sbin/swapon -p 100 /dev/zram0"
+# ── 2. Servicio runit para activar zram en cada arranque ─────────────────
+echo -e "${CYAN}→${RESET} Creando servicio runit zram-swap..."
+sudo mkdir -p /etc/sv/zram-swap
+
+sudo tee /etc/sv/zram-swap/run > /dev/null << EOF
+#!/bin/sh
+# Servicio runit: activa zram swap al arranque
+# Tamanio: ${ZRAM_SIZE_MB}MB | Algoritmo: lz4 | Prioridad: 100
+
+# Esperar a que el modulo este listo
+modprobe zram num_devices=1 2>/dev/null || true
+sleep 1
+
+DEV=/dev/zram0
+SIZE="${ZRAM_SIZE_MB}M"
+
+# Si ya esta activo, salir
+if grep -q "zram0" /proc/swaps 2>/dev/null; then
+    exit 0
+fi
+
+# Resetear estado anterior si existiera
+swapoff \$DEV 2>/dev/null || true
+echo 1 > /sys/block/zram0/reset 2>/dev/null || true
+
+# Configurar y activar
+echo lz4   > /sys/block/zram0/comp_algorithm
+echo \$SIZE > /sys/block/zram0/disksize
+mkswap \$DEV
+swapon -p 100 \$DEV
+
+# Este servicio es oneshot: terminar tras activar
+sv down zram-swap 2>/dev/null || true
 EOF
+
+sudo chmod +x /etc/sv/zram-swap/run
+
+# Habilitar el servicio
+sudo ln -sf /etc/sv/zram-swap /var/service/zram-swap 2>/dev/null || true
+echo -e "${CYAN}→${RESET} Servicio zram-swap habilitado en runit"
+
+# ── 3. Limpiar udev (ya no es necesaria) ─────────────────────────────────
+sudo rm -f /etc/udev/rules.d/99-zram.rules 2>/dev/null || true
+
+# ── 4. Activar ahora mismo sin reiniciar ─────────────────────────────────
+echo -e "${CYAN}→${RESET} Cargando modulo zram..."
+sudo swapoff /dev/zram0 2>/dev/null || true
+sudo rmmod zram 2>/dev/null || true
+sleep 1
+sudo modprobe zram num_devices=1 || {
+    echo -e "${RED}Error: no se pudo cargar zram.${RESET}"; exit 1
+}
+sleep 1
+
+if [ ! -b /dev/zram0 ]; then
+    echo -e "${RED}Error: /dev/zram0 no aparecio.${RESET}"; exit 1
+fi
+
+echo -e "${CYAN}→${RESET} Configurando zram0..."
+echo lz4 | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+echo "${ZRAM_SIZE_MB}M" | sudo tee /sys/block/zram0/disksize > /dev/null
+sudo mkswap /dev/zram0
+sudo swapon -p 100 /dev/zram0
 
 # ── 5. sysctl ─────────────────────────────────────────────────────────────
 echo -e "${CYAN}→${RESET} Aplicando sysctl de memoria..."
@@ -100,7 +132,8 @@ echo ""
 cat /proc/swaps
 echo -e "──────────────────────────────────────"
 echo -e "  Algoritmo:  lz4"
-echo -e "  Prioridad:  100 (preferida sobre swap en disco)"
+echo -e "  Prioridad:  100"
 echo -e "  swappiness: ${SWAPPINESS}"
 echo -e "──────────────────────────────────────"
-echo -e "${YELLOW}Persistente:${RESET} modules-load.d + udev lo activaran en cada arranque."
+echo -e "${YELLOW}Persistente:${RESET} servicio runit zram-swap se ejecuta en cada arranque."
+echo -e "  Verifica con: sudo sv status zram-swap"
