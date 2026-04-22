@@ -1583,6 +1583,77 @@ step_extra() {
     msgbox "Extras instalados correctamente."
 }
 
+# ─────────────────────────── PASO: Swap automático ──────────────────────
+
+step_swap() {
+    # Detectar RAM total en MB
+    local RAM_MB
+    RAM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "4096")
+
+    # Detectar si ya hay swap activa
+    local SWAP_ACTIVE
+    SWAP_ACTIVE=$(swapon --show 2>/dev/null | grep -v "^NAME" | wc -l)
+
+    if [ "$SWAP_ACTIVE" -gt 0 ]; then
+        msgbox "Ya existe swap activa en el sistema.\n\n$(swapon --show 2>/dev/null)\n\nNo se realizaran cambios."
+        return 0
+    fi
+
+    # Calcular tamaño óptimo de zram (50% RAM, mínimo 512MB, máximo 4096MB)
+    local ZRAM_MB=$(( RAM_MB / 2 ))
+    [ "$ZRAM_MB" -lt 512 ]  && ZRAM_MB=512
+    [ "$ZRAM_MB" -gt 4096 ] && ZRAM_MB=4096
+
+    yesno "Configurar swap automaticamente?\n\nRAM detectada: ${RAM_MB}MB\n\nSe configurara zram swap comprimida (lz4):\n  Tamanio: ${ZRAM_MB}MB (50% de RAM)\n  Tipo:    zram en RAM (sin disco)\n  Prioridad: 100 (preferida sobre swap en disco)\n\nOptimo para tu equipo con ${RAM_MB}MB RAM." || return 0
+
+    clear
+    log "─── Configurando zram swap (${ZRAM_MB}MB, lz4) ───"
+
+    # Instalar zram si no está disponible
+    if ! xbps-query zramen &>/dev/null 2>&1; then
+        sudo xbps-install -Suy zramen 2>/dev/null || \
+        sudo xbps-install -Suy zram-generator 2>/dev/null || true
+    fi
+
+    # Cargar módulo zram
+    sudo modprobe zram num_devices=1 2>/dev/null || true
+
+    # Configurar módulo al arranque
+    sudo mkdir -p /etc/modprobe.d
+    echo "options zram num_devices=1" | sudo tee /etc/modprobe.d/zram.conf > /dev/null
+
+    # Regla udev para activar zram0 automáticamente al arranque
+    sudo mkdir -p /etc/udev/rules.d
+    sudo tee /etc/udev/rules.d/99-zram.rules > /dev/null << EOF
+KERNEL=="zram0", ATTR{disksize}="${ZRAM_MB}M", ATTR{comp_algorithm}="lz4", RUN+="/sbin/mkswap /dev/zram0", RUN+="/sbin/swapon -p 100 /dev/zram0"
+EOF
+
+    # Activar zram ahora mismo sin reiniciar
+    if [ -b /dev/zram0 ]; then
+        echo lz4 | sudo tee /sys/block/zram0/comp_algorithm > /dev/null 2>&1 || true
+        echo "${ZRAM_MB}M" | sudo tee /sys/block/zram0/disksize > /dev/null 2>&1 && \
+        sudo mkswap /dev/zram0 > /dev/null 2>&1 && \
+        sudo swapon -p 100 /dev/zram0 > /dev/null 2>&1 && \
+        log "  -> zram0 activo ahora mismo (${ZRAM_MB}MB)" || \
+        log "  -> zram0 se activara tras reiniciar"
+    fi
+
+    # Parámetro sysctl: swappiness bajo para RAM >= 8GB, medio para menos
+    local SWAPPINESS=10
+    [ "$RAM_MB" -lt 8192 ] && SWAPPINESS=20
+
+    sudo mkdir -p /etc/sysctl.d
+    sudo tee /etc/sysctl.d/99-zram-swap.conf > /dev/null << EOF
+vm.swappiness = ${SWAPPINESS}
+vm.page-cluster = 0
+EOF
+    sudo sysctl -p /etc/sysctl.d/99-zram-swap.conf > /dev/null 2>&1 || true
+
+    log "  -> swappiness=${SWAPPINESS}, page-cluster=0 aplicados"
+
+    msgbox "Swap zram configurado correctamente.\n\n  Tamanio:    ${ZRAM_MB}MB\n  Algoritmo:  lz4\n  Swappiness: ${SWAPPINESS}\n  Prioridad:  100\n\nVerifica con:\n  cat /proc/swaps\n  free -h"
+}
+
 # ─────────────────────────── PASO final: Reiniciar ───────────────────────
 
 step_finish() {
@@ -1910,7 +1981,11 @@ El log completo se guardo en: $LOGFILE" \
     fi
     rm -f "$ERR_LOG"
 
+    # Configurar swap
     _EXPRESS_MODE=0
+    step_swap
+    _EXPRESS_MODE=1
+
     log "=== Modo Express completado ==="
 
     # Configurar entorno shell
@@ -2009,6 +2084,7 @@ main_menu() {
                 step_pim
                 step_fonts
                 step_extra
+                step_swap
                 step_shell_env
                 step_finish
                 ;;
