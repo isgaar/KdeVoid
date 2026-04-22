@@ -124,8 +124,19 @@ do_zram() {
 
     local TOTAL_RAM_MB
     TOTAL_RAM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "4096")
-    local ZRAM_SIZE_MB=$(( TOTAL_RAM_MB / 2 ))
 
+    # Tamaño adaptativo: 50% RAM, mínimo 512MB, máximo 4096MB
+    local ZRAM_SIZE_MB=$(( TOTAL_RAM_MB / 2 ))
+    [ "$ZRAM_SIZE_MB" -lt 512 ]  && ZRAM_SIZE_MB=512
+    [ "$ZRAM_SIZE_MB" -gt 4096 ] && ZRAM_SIZE_MB=4096
+
+    # Swappiness adaptativo: menos agresivo con más RAM (como macOS)
+    local SWAPPINESS=10
+    [ "$TOTAL_RAM_MB" -lt 8192 ] && SWAPPINESS=20
+    [ "$TOTAL_RAM_MB" -lt 4096 ] && SWAPPINESS=35
+
+    # Configurar módulo al arranque
+    sudo mkdir -p /etc/modprobe.d
     sudo tee /etc/modprobe.d/zram.conf > /dev/null << EOF
 options zram num_devices=1
 EOF
@@ -135,7 +146,32 @@ EOF
 KERNEL=="zram0", ATTR{disksize}="${ZRAM_SIZE_MB}M", ATTR{comp_algorithm}="lz4", RUN+="/sbin/mkswap /dev/zram0", RUN+="/sbin/swapon -p 100 /dev/zram0"
 EOF
 
-    log "  -> zram: ${ZRAM_SIZE_MB}MB con lz4 (50% de ${TOTAL_RAM_MB}MB RAM)"
+    # Activar ahora mismo sin reiniciar
+    sudo modprobe zram num_devices=1 2>/dev/null || true
+    if [ -b /dev/zram0 ]; then
+        # Desactivar primero si ya estaba montado
+        sudo swapoff /dev/zram0 2>/dev/null || true
+        echo 1 | sudo tee /sys/block/zram0/reset > /dev/null 2>&1 || true
+        echo lz4 | sudo tee /sys/block/zram0/comp_algorithm > /dev/null 2>&1 || true
+        echo "${ZRAM_SIZE_MB}M" | sudo tee /sys/block/zram0/disksize > /dev/null 2>&1 && \
+        sudo mkswap /dev/zram0 > /dev/null 2>&1 && \
+        sudo swapon -p 100 /dev/zram0 > /dev/null 2>&1 && \
+        log "  -> zram0 activo ahora (${ZRAM_SIZE_MB}MB, lz4)" || \
+        log "  -> zram0 se activara tras reiniciar"
+    fi
+
+    # Aplicar sysctl de memoria ahora mismo
+    sudo mkdir -p /etc/sysctl.d
+    sudo tee /etc/sysctl.d/99-zram-memory.conf > /dev/null << EOF
+vm.swappiness            = ${SWAPPINESS}
+vm.page-cluster          = 0
+vm.vfs_cache_pressure    = 50
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
+EOF
+    sudo sysctl -p /etc/sysctl.d/99-zram-memory.conf > /dev/null 2>&1 || true
+
+    log "  -> zram: ${ZRAM_SIZE_MB}MB lz4 | swappiness=${SWAPPINESS} | RAM=${TOTAL_RAM_MB}MB"
     echo "$ZRAM_SIZE_MB"
 }
 
@@ -260,15 +296,8 @@ do_flathub_mirror() {
 
     sudo flatpak remote-modify flathub \
         --url=https://dl.flathub.org/repo/ 2>/dev/null || true
-
-    sudo mkdir -p /etc/flatpak/installations.d
-    sudo mkdir -p /etc/flatpak/installations.d
-    sudo tee /etc/flatpak/installations.d/default.conf > /dev/null << 'EOF'
-[Installation "default"]
-Path=/var/lib/flatpak
-DisplayName=System Installation
-StorageType=network
-EOF
+    flatpak remote-modify --user flathub \
+        --url=https://dl.flathub.org/repo/ 2>/dev/null || true
 
     if [ -f /var/lib/flatpak/repo/config ]; then
         sudo git config --file /var/lib/flatpak/repo/config \
