@@ -379,6 +379,7 @@ Podras elegir exactamente que componentes instalar:
   - KDE Plasma 6 y aplicaciones
   - KDE Discover (tienda de apps)
   - Gestion de energia (TLP)
+  - zram swap (swap comprimido en RAM, lz4)
   - Fuentes Unicode, CJK/Japonesas, MS Core (Arial)
   - Timeshift para instantaneas del sistema
 
@@ -1586,6 +1587,141 @@ step_extra() {
     msgbox "Extras instalados correctamente."
 }
 
+# ─────────────────────────── zram: lógica central ────────────────────────
+#
+# Configura zram swap (activa ahora + persiste via runit)
+# Extraido y adaptado desde setup-zram.sh
+# Puede llamarse desde step_zram (modo interactivo) o install_express.
+#
+setup_zram() {
+    # ── Detectar RAM y calcular tamaño ────────────────────────────────────
+    local TOTAL_RAM_MB ZRAM_SIZE_MB SWAPPINESS
+    TOTAL_RAM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+    ZRAM_SIZE_MB=$(( TOTAL_RAM_MB / 2 ))
+    [ "$ZRAM_SIZE_MB" -gt 4096 ] && ZRAM_SIZE_MB=4096
+    [ "$ZRAM_SIZE_MB" -lt 512  ] && ZRAM_SIZE_MB=512
+
+    SWAPPINESS=10
+    [ "$TOTAL_RAM_MB" -lt 8192 ] && SWAPPINESS=20
+    [ "$TOTAL_RAM_MB" -lt 4096 ] && SWAPPINESS=35
+
+    log "  -> RAM detectada: ${TOTAL_RAM_MB}MB  |  zram: ${ZRAM_SIZE_MB}MB (lz4)  |  swappiness: ${SWAPPINESS}"
+
+    # ── Verificar si ya hay swap zram activa ─────────────────────────────
+    if swapon --show 2>/dev/null | grep -q "^/dev/zram"; then
+        log "  -> zram ya esta activo, omitiendo configuracion."
+        return 0
+    fi
+
+    # ── modules-load.d ───────────────────────────────────────────────────
+    log "  -> Configurando carga automatica del modulo zram..."
+    sudo mkdir -p /etc/modules-load.d
+    echo "zram" | sudo tee /etc/modules-load.d/zram.conf > /dev/null
+    sudo mkdir -p /etc/modprobe.d
+    sudo tee /etc/modprobe.d/zram.conf > /dev/null << 'EOF'
+options zram num_devices=1
+EOF
+
+    # ── Servicio runit zram-swap ──────────────────────────────────────────
+    log "  -> Creando servicio runit zram-swap..."
+    sudo mkdir -p /etc/sv/zram-swap
+    sudo tee /etc/sv/zram-swap/run > /dev/null << EOF
+#!/bin/sh
+# Servicio runit: activa zram swap al arranque
+# Tamanio: ${ZRAM_SIZE_MB}MB | Algoritmo: lz4 | Prioridad: 100
+
+modprobe zram num_devices=1 2>/dev/null || true
+sleep 1
+
+DEV=/dev/zram0
+SIZE="${ZRAM_SIZE_MB}M"
+
+if grep -q "zram0" /proc/swaps 2>/dev/null; then
+    exit 0
+fi
+
+swapoff \$DEV 2>/dev/null || true
+echo 1 > /sys/block/zram0/reset 2>/dev/null || true
+
+echo lz4   > /sys/block/zram0/comp_algorithm
+echo \$SIZE > /sys/block/zram0/disksize
+mkswap \$DEV
+swapon -p 100 \$DEV
+
+sv down zram-swap 2>/dev/null || true
+EOF
+    sudo chmod +x /etc/sv/zram-swap/run
+    sudo ln -sf /etc/sv/zram-swap /var/service/zram-swap 2>/dev/null || true
+    log "  -> Servicio zram-swap habilitado en runit"
+
+    # ── Limpiar regla udev anterior si existiera ─────────────────────────
+    sudo rm -f /etc/udev/rules.d/99-zram.rules 2>/dev/null || true
+
+    # ── Activar ahora mismo ───────────────────────────────────────────────
+    log "  -> Cargando modulo zram..."
+    sudo swapoff /dev/zram0 2>/dev/null || true
+    sudo rmmod zram 2>/dev/null || true
+    sleep 1
+    sudo modprobe zram num_devices=1 || {
+        log "  -> Error: no se pudo cargar el modulo zram."
+        return 1
+    }
+    sleep 1
+
+    if [ ! -b /dev/zram0 ]; then
+        log "  -> Error: /dev/zram0 no aparecio tras modprobe."
+        return 1
+    fi
+
+    log "  -> Configurando zram0..."
+    echo lz4 | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+    echo "${ZRAM_SIZE_MB}M" | sudo tee /sys/block/zram0/disksize > /dev/null
+    sudo mkswap /dev/zram0
+    sudo swapon -p 100 /dev/zram0
+
+    # ── sysctl de memoria ─────────────────────────────────────────────────
+    log "  -> Aplicando sysctl de memoria..."
+    sudo mkdir -p /etc/sysctl.d
+    sudo tee /etc/sysctl.d/99-zram-memory.conf > /dev/null << EOF
+vm.swappiness             = ${SWAPPINESS}
+vm.page-cluster           = 0
+vm.vfs_cache_pressure     = 50
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
+EOF
+    sudo sysctl -p /etc/sysctl.d/99-zram-memory.conf > /dev/null 2>&1
+
+    log "  -> zram swap activo: ${ZRAM_SIZE_MB}MB | lz4 | prioridad 100 | swappiness ${SWAPPINESS}"
+}
+
+# ─────────────────────────── PASO 11b: zram swap ─────────────────────────
+
+step_zram() {
+    # Detectar RAM para mostrar info en el diálogo
+    local TOTAL_RAM_MB ZRAM_SIZE_MB
+    TOTAL_RAM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+    ZRAM_SIZE_MB=$(( TOTAL_RAM_MB / 2 ))
+    [ "$ZRAM_SIZE_MB" -gt 4096 ] && ZRAM_SIZE_MB=4096
+    [ "$ZRAM_SIZE_MB" -lt 512  ] && ZRAM_SIZE_MB=512
+
+    # Verificar si ya hay swap zram activa
+    local ZRAM_STATUS="No activo"
+    swapon --show 2>/dev/null | grep -q "^/dev/zram" && ZRAM_STATUS="YA ACTIVO"
+
+    if ! yesno "Configurar zram swap?\n\nzram crea un dispositivo de swap comprimido en RAM\ncon lz4, mucho mas rapido que swap en disco.\n\n  RAM detectada:  ${TOTAL_RAM_MB} MB\n  Tamanio zram:   ${ZRAM_SIZE_MB} MB  (maximo: 4096 MB)\n  Algoritmo:      lz4\n  Prioridad:      100\n  Estado actual:  ${ZRAM_STATUS}\n\nSe crea un servicio runit para persistir en reinicios.\nRecomendado especialmente si tienes poca RAM."; then
+        log "zram omitido por el usuario."
+        return 0
+    fi
+
+    clear
+    log "Configurando zram swap..."
+    if setup_zram; then
+        msgbox "zram swap configurado correctamente.\n\n  Tamanio:    ${ZRAM_SIZE_MB} MB\n  Algoritmo:  lz4\n  Prioridad:  100\n  Servicio:   /etc/sv/zram-swap  (runit)\n\nVerifica con:\n  swapon --show\n  sudo sv status zram-swap\n  cat /proc/swaps"
+    else
+        msgbox "Advertencia: zram no pudo activarse ahora.\nEl servicio runit lo intentara en el proximo reinicio.\n\nVerifica el modulo del kernel:\n  lsmod | grep zram\n  modprobe zram"
+    fi
+}
+
 # ─────────────────────────── PASO final: Reiniciar ───────────────────────
 
 step_finish() {
@@ -1824,7 +1960,12 @@ NVEXPRESS
     _xbps tlp tlp-rdw tlp-pd
     sudo xbps-install -Suy cronie >> "$ERR_LOG" 2>&1 || true
 
-    _gp 84 "Instalando curl y fuentes Unicode/CJK/Japonesas/Emojis..."
+    _gp 85 "Configurando zram swap..."
+    setup_zram >> "$ERR_LOG" 2>&1 || \
+        printf '[WARN %s] zram no pudo activarse (se reintentara con runit al reiniciar)\n' \
+            "$(date '+%H:%M:%S')" >> "$ERR_LOG"
+
+    _gp 87 "Instalando curl y fuentes Unicode/CJK/Japonesas/Emojis..."
     sudo xbps-install -Suy curl cabextract >> "$ERR_LOG" 2>&1 || true
     _xbps noto-fonts-ttf noto-fonts-cjk noto-fonts-emoji dejavu-fonts-ttf liberation-fonts-ttf
     # Configurar soporte de emojis en color via fontconfig
@@ -1991,7 +2132,7 @@ main_menu() {
 
         case "$CHOICE" in
             1)
-                if yesno "Modo Express instalara:\n\n  xorg + xinit + xinput + libinput\n  Microcódigo CPU (AMD/Intel auto-detectado)\n  PipeWire (audio)\n  KDE Plasma 6 + apps esenciales\n  TLP (ahorro de energia)\n  SDDM (gestor de sesion)\n  curl + cabextract\n  Fuentes Noto CJK (japonés/chino/coreano)\n  Fuentes MS Core (Arial, Times New Roman...)\n\nDeseas continuar?"; then
+                if yesno "Modo Express instalara:\n\n  xorg + xinit + xinput + libinput\n  Microcódigo CPU (AMD/Intel auto-detectado)\n  PipeWire (audio)\n  KDE Plasma 6 + apps esenciales\n  TLP (ahorro de energia)\n  zram swap (RAM comprimida, lz4)\n  SDDM (gestor de sesion)\n  curl + cabextract\n  Fuentes Noto CJK (japonés/chino/coreano)\n  Fuentes MS Core (Arial, Times New Roman...)\n\nDeseas continuar?"; then
                     detect_hardware
                     step_update
                     step_repos
@@ -2010,6 +2151,7 @@ main_menu() {
                 step_plasma_apps
                 step_plasma_optional
                 step_power
+                step_zram
                 step_timeshift
                 step_pim
                 step_fonts
