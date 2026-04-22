@@ -1264,13 +1264,16 @@ Ruta (puedes escribir cualquier ruta existente):" \
         20 68 "$DEFAULT_PATH" \
         3>&1 1>&2 2>&3) || SNAP_PATH="$DEFAULT_PATH"
     SNAP_PATH="${SNAP_PATH:-$DEFAULT_PATH}"
+    # Normalizar: quitar barra final para evitar rutas tipo //timeshift
+    SNAP_PATH="${SNAP_PATH%/}"
+    [ -z "$SNAP_PATH" ] && SNAP_PATH=""   # si era solo "/", queda vacío → /timeshift
 
-    if [ ! -d "$SNAP_PATH" ]; then
+    if [ ! -d "$SNAP_PATH" ] && [ -n "$SNAP_PATH" ]; then
         if yesno "La ruta '$SNAP_PATH' no existe.\nDeseas crearla ahora?"; then
             sudo mkdir -p "$SNAP_PATH"
             log "  -> Directorio creado: $SNAP_PATH"
         else
-            SNAP_PATH="/"
+            SNAP_PATH=""
         fi
     fi
 
