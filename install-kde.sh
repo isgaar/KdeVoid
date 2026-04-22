@@ -186,6 +186,8 @@ BASE_PACKAGES=(
     dbus
     NetworkManager
     curl
+    nano
+    base-devel
 )
 
 PLASMA_CORE_OPTS=(
@@ -1568,6 +1570,51 @@ step_fonts() {
     msgbox "Instalacion de fuentes completada.\n\nFuentes disponibles para KDE y todas las apps.\n\nComandos utiles:\n  fc-list                  (listar todas)\n  fc-list :lang=ja         (solo japonesas)\n  fc-list :lang=zh         (solo chinas)\n  fc-list | grep -i emoji  (verificar emojis)"
 }
 
+# ─────────────────────────── Plasmoid: Panel Spacer ─────────────────────────
+#
+# Crea el plasmoid org.kde.plasma.panelspacer localmente si no existe.
+# Permite usar el espaciador en paneles de KDE Plasma 6 sin depender de paquete.
+#
+setup_panel_spacer() {
+    local PLASMOID_DIR="$HOME/.local/share/plasma/plasmoids/org.kde.plasma.panelspacer"
+
+    if [ -d "$PLASMOID_DIR" ]; then
+        log "  -> Plasmoid panelspacer ya existe en $PLASMOID_DIR, omitiendo."
+        return 0
+    fi
+
+    log "  -> Creando directorio del plasmoid panelspacer..."
+    mkdir -p "$PLASMOID_DIR"
+
+    log "  -> Escribiendo metadata.json del plasmoid..."
+    cat > "$PLASMOID_DIR/metadata.json" << 'EOF'
+{
+  "KPlugin": {
+    "Authors": [{"Email": "plasma-devel@kde.org", "Name": "Plasma Team"}],
+    "Category": "Utilities",
+    "Description": "A simple spacer for the panel",
+    "Icon": "distribute-horizontal-x",
+    "Id": "org.kde.plasma.panelspacer",
+    "Name": "Spacer",
+    "Version": "1.0"
+  },
+  "X-Plasma-API-Minimum-Version": "6.0"
+}
+EOF
+
+    log "  -> Plasmoid org.kde.plasma.panelspacer creado en $PLASMOID_DIR"
+}
+
+step_panel_spacer() {
+    if ! yesno "Crear plasmoid 'Spacer' para el panel de KDE?\n\nEsto instala el plasmoid org.kde.plasma.panelspacer\nlocalmente en tu perfil de usuario:\n  ~/.local/share/plasma/plasmoids/\n\nPermite agregar un espaciador flexible al panel\nde KDE Plasma 6 sin necesitar paquete adicional."; then
+        log "Plasmoid panelspacer omitido por el usuario."
+        return 0
+    fi
+
+    setup_panel_spacer
+    msgbox "Plasmoid 'Spacer' creado correctamente.\n\nUbicacion:\n  ~/.local/share/plasma/plasmoids/org.kde.plasma.panelspacer/\n\nPara usarlo:\n  Clic derecho en el panel → Añadir widgets → Spacer"
+}
+
 # ─────────────────────────── PASO 14: Extras ─────────────────────────────
 
 step_extra() {
@@ -2140,6 +2187,11 @@ NVEXPRESS
         printf '[WARN %s] No se pudo instalar el tema SDDM breeze-void\n' \
             "$(date '+%H:%M:%S')" >> "$ERR_LOG"
 
+    _gp 94 "Creando plasmoid panelspacer..."
+    setup_panel_spacer >> "$ERR_LOG" 2>&1 || \
+        printf '[WARN %s] No se pudo crear el plasmoid panelspacer\n' \
+            "$(date '+%H:%M:%S')" >> "$ERR_LOG"
+
     _gp 95 "Creando configuraciones..."
     if [ ! -f "$HOME/.xinitrc" ]; then
         printf '#!/bin/sh\nexec startplasma-x11\n' > "$HOME/.xinitrc"
@@ -2287,6 +2339,7 @@ main_menu() {
                 step_pim
                 step_fonts
                 step_extra
+                step_panel_spacer
                 step_shell_env
                 step_finish
                 ;;
