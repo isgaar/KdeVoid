@@ -185,6 +185,7 @@ BASE_PACKAGES=(
     wayland
     dbus
     NetworkManager
+    curl
 )
 
 PLASMA_CORE_OPTS=(
@@ -288,6 +289,19 @@ PYTHON_OPTS=(
     "python3-dbus"                 "Dependencia Python para Eduroam WiFi" OFF
 )
 
+FONTS_OPTS=(
+    "noto-fonts-ttf"               "Noto Sans / Serif — cobertura Unicode amplia" ON
+    "noto-fonts-cjk"               "Noto CJK — japones, chino, coreano (CJK)" ON
+    "noto-fonts-emoji"             "Noto Emoji — emojis en color" ON
+    "font-misc-misc"               "Fuentes miscelaneas X11 (simbolos, especiales)" OFF
+    "terminus-font"                "Terminus — fuente monoespaciada para terminal" OFF
+    "dejavu-fonts-ttf"             "DejaVu — cubre muchos simbolos Unicode" ON
+    "liberation-fonts-ttf"         "Liberation — metricas compatibles con Arial/Times/Courier" ON
+    "cantarell-fonts"              "Cantarell — fuente GNOME/moderna" OFF
+    "ttf-ubuntu-font-family"       "Ubuntu Font Family" OFF
+    "fonts-roboto-ttf"             "Roboto — fuente de Google/Android" OFF
+)
+
 # ─────────────────────────── Funciones de menu ───────────────────────────
 
 checklist_menu() {
@@ -365,6 +379,7 @@ Podras elegir exactamente que componentes instalar:
   - KDE Plasma 6 y aplicaciones
   - KDE Discover (tienda de apps)
   - Gestion de energia (TLP)
+  - Fuentes Unicode, CJK/Japonesas, MS Core (Arial)
   - Timeshift para instantaneas del sistema
 
 Presiona ENTER para continuar." \
@@ -1368,7 +1383,188 @@ step_pim() {
     fi
 }
 
-# ─────────────────────────── PASO 13: Extras ─────────────────────────────
+# ─────────────────────────── PASO 13: Fuentes ────────────────────────────
+
+# Instala fuentes Microsoft Core (Arial, Times New Roman, Courier...) via cabextract
+install_ms_fonts() {
+    log "Instalando fuentes Microsoft Core (Arial, Times New Roman, Courier...)..."
+
+    # Instalar dependencias
+    sudo xbps-install -Suy curl cabextract 2>/dev/null || {
+        log "  -> Error: no se pudo instalar curl/cabextract"
+        whiptail --title "Error" --backtitle "$BACKTITLE" --msgbox \
+            "No se pudieron instalar curl y/o cabextract.\nVerifica tu conexion a internet e intenta de nuevo." \
+            8 55
+        return 1
+    }
+
+    # Crear directorio de fuentes
+    local FONT_DIR="$HOME/.local/share/fonts/msfonts"
+    mkdir -p "$FONT_DIR"
+    cd "$FONT_DIR" || return 1
+
+    log "  -> Descargando arial32.exe desde SourceForge..."
+    if ! curl -L --retry 3 --connect-timeout 30 -o arial32.exe \
+        "https://sourceforge.net/projects/corefonts/files/the%20fonts/final/arial32.exe"; then
+        log "  -> Error al descargar arial32.exe"
+        whiptail --title "Error de descarga" --backtitle "$BACKTITLE" --msgbox \
+            "No se pudo descargar arial32.exe.\nVerifica tu conexion a internet." \
+            8 55
+        cd - > /dev/null
+        return 1
+    fi
+
+    log "  -> Extrayendo fuentes..."
+    cabextract -q arial32.exe 2>/dev/null || cabextract arial32.exe || true
+    rm -f arial32.exe
+
+    # Actualizar cache de fuentes
+    fc-cache -fv "$FONT_DIR" 2>/dev/null || fc-cache -f 2>/dev/null || true
+    log "  -> Fuentes MS (Arial) instaladas en $FONT_DIR"
+    cd - > /dev/null
+}
+
+# Configura fontconfig para renderizar emojis correctamente en todo el sistema
+configure_emoji() {
+    log "Configurando soporte de emojis via fontconfig..."
+
+    local FC_DIR="/etc/fonts/conf.d"
+    local FC_AVAIL="/etc/fonts/conf.avail"
+    sudo mkdir -p "$FC_DIR" "$FC_AVAIL"
+
+    # ── Archivo de configuracion: prioridad de fuente emoji ───────────────
+    # Hace que Noto Color Emoji se use para bloques emoji Unicode,
+    # pero NO reemplaza caracteres de texto normales.
+    local EMOJI_CONF="$FC_AVAIL/75-noto-color-emoji.conf"
+    sudo tee "$EMOJI_CONF" > /dev/null << 'EMOJICONF'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<!--
+  Configuracion de emojis para Noto Color Emoji.
+  Generado por kde-void-installer.
+
+  - Prioriza Noto Color Emoji para rangos Unicode de emojis.
+  - Evita que sustituya caracteres de texto normal.
+-->
+<fontconfig>
+
+  <!-- Alias para solicitudes genericas de "emoji" -->
+  <alias>
+    <family>emoji</family>
+    <prefer>
+      <family>Noto Color Emoji</family>
+    </prefer>
+  </alias>
+
+  <!-- Hacer que Noto Color Emoji sea la fuente emoji preferida globalmente -->
+  <match target="pattern">
+    <test qual="any" name="family">
+      <string>serif</string>
+    </test>
+    <edit name="family" mode="append" binding="weak">
+      <string>Noto Color Emoji</string>
+    </edit>
+  </match>
+
+  <match target="pattern">
+    <test qual="any" name="family">
+      <string>sans-serif</string>
+    </test>
+    <edit name="family" mode="append" binding="weak">
+      <string>Noto Color Emoji</string>
+    </edit>
+  </match>
+
+  <match target="pattern">
+    <test qual="any" name="family">
+      <string>monospace</string>
+    </test>
+    <edit name="family" mode="append" binding="weak">
+      <string>Noto Color Emoji</string>
+    </edit>
+  </match>
+
+  <!-- Bloquear sustitucion de texto ASCII por glifos emoji (variation selector) -->
+  <selectfont>
+    <rejectfont>
+      <pattern>
+        <patelt name="family">
+          <string>Symbola</string>
+        </patelt>
+      </pattern>
+    </rejectfont>
+  </selectfont>
+
+</fontconfig>
+EMOJICONF
+
+    # Activar la configuracion (enlace simbolico en conf.d)
+    if [ ! -e "$FC_DIR/75-noto-color-emoji.conf" ]; then
+        sudo ln -sf "$EMOJI_CONF" "$FC_DIR/75-noto-color-emoji.conf"
+        log "  -> 75-noto-color-emoji.conf activado en $FC_DIR"
+    fi
+
+    # ── Asegurar que 10-hinting-slight.conf y antialiasing esten activos ──
+    for conf in 10-hinting-slight 10-sub-pixel-rgb 11-lcdfilter-default; do
+        if [ -f "$FC_AVAIL/$conf.conf" ] && [ ! -e "$FC_DIR/$conf.conf" ]; then
+            sudo ln -sf "$FC_AVAIL/$conf.conf" "$FC_DIR/$conf.conf"
+            log "  -> $conf.conf activado"
+        fi
+    done
+
+    # Actualizar cache global
+    sudo fc-cache -f 2>/dev/null || true
+    fc-cache -f 2>/dev/null || true
+    log "  -> Cache de fuentes actualizado con soporte emoji"
+}
+
+step_fonts() {
+    # ── Fuentes de repositorio ─────────────────────────────────────────────
+    RAW=$(checklist_menu \
+        "Fuentes — Repositorio Void" \
+        "Selecciona fuentes a instalar desde los repositorios.\nNoto CJK incluye soporte completo para japones, chino y coreano.\nNoto Emoji activa emojis en color en todo el sistema:" \
+        "${FONTS_OPTS[@]}") || true
+
+    RAW=${RAW//\"/}
+    read -r -a SELECTED <<< "$RAW"
+
+    local EMOJI_INSTALLED=0
+
+    if [ ${#SELECTED[@]} -gt 0 ]; then
+        clear
+        log "Instalando fuentes desde repositorio: ${SELECTED[*]}"
+        install_packages "${SELECTED[@]}"
+        # Detectar si se instalo noto-fonts-emoji
+        for pkg in "${SELECTED[@]}"; do
+            [[ "$pkg" == "noto-fonts-emoji" ]] && EMOJI_INSTALLED=1
+        done
+        # Actualizar cache
+        fc-cache -f 2>/dev/null || true
+        log "  -> Cache de fuentes actualizado"
+    fi
+
+    # ── Configuracion de emojis ───────────────────────────────────────────
+    if [ "$EMOJI_INSTALLED" -eq 1 ]; then
+        configure_emoji
+        msgbox "Soporte de emojis configurado.\n\nNoto Color Emoji se usara automaticamente en:\n  - Navegadores (Firefox, Chromium)\n  - Terminal (Konsole)\n  - Aplicaciones Qt/KDE\n  - Editor de texto (KWrite, Kate)\n\nConfiguracion guardada en:\n  /etc/fonts/conf.d/75-noto-color-emoji.conf\n\nVerifica con:\n  fc-list | grep -i emoji"
+    elif yesno "Configurar soporte de emojis en color?\n\nInstala Noto Color Emoji y configura fontconfig\npara que los emojis se muestren correctamente\nen todas las aplicaciones (navegador, terminal,\naplicaciones KDE, etc.).\n\nSin esta configuracion los emojis pueden\naparecer como cuadros o en blanco y negro."; then
+        clear
+        log "Instalando noto-fonts-emoji..."
+        sudo xbps-install -Suy noto-fonts-emoji 2>/dev/null || true
+        configure_emoji
+        msgbox "Soporte de emojis instalado y configurado.\n\nNoto Color Emoji activo en todo el sistema.\n\nConfiguracion en:\n  /etc/fonts/conf.d/75-noto-color-emoji.conf"
+    fi
+
+    # ── Fuentes Microsoft (Arial, Times New Roman, etc.) ──────────────────
+    if yesno "Instalar fuentes Microsoft Core?\n\n  Arial, Times New Roman, Courier New,\n  Verdana, Georgia, Impact...\n\nSe descarga el instalador desde SourceForge\ny se extrae con cabextract.\n\nRequiere conexion a internet."; then
+        install_ms_fonts
+        msgbox "Fuentes Microsoft instaladas en:\n  ~/.local/share/fonts/msfonts/\n\nPuedes verificar con:\n  fc-list | grep -i arial"
+    fi
+
+    msgbox "Instalacion de fuentes completada.\n\nFuentes disponibles para KDE y todas las apps.\n\nComandos utiles:\n  fc-list                  (listar todas)\n  fc-list :lang=ja         (solo japonesas)\n  fc-list :lang=zh         (solo chinas)\n  fc-list | grep -i emoji  (verificar emojis)"
+}
+
+# ─────────────────────────── PASO 14: Extras ─────────────────────────────
 
 step_extra() {
     RAW=$(checklist_menu \
@@ -1623,6 +1819,30 @@ NVEXPRESS
     _xbps tlp tlp-rdw tlp-pd
     sudo xbps-install -Suy cronie >> "$ERR_LOG" 2>&1 || true
 
+    _gp 84 "Instalando curl y fuentes Unicode/CJK/Japonesas/Emojis..."
+    sudo xbps-install -Suy curl cabextract >> "$ERR_LOG" 2>&1 || true
+    _xbps noto-fonts-ttf noto-fonts-cjk noto-fonts-emoji dejavu-fonts-ttf liberation-fonts-ttf
+    # Configurar soporte de emojis en color via fontconfig
+    configure_emoji >> "$ERR_LOG" 2>&1 || true
+    log "  -> Soporte de emojis configurado"
+    # Instalar fuentes Microsoft Core (Arial, Times New Roman...)
+    {
+        local _FONT_DIR="$HOME/.local/share/fonts/msfonts"
+        mkdir -p "$_FONT_DIR"
+        cd "$_FONT_DIR" || true
+        if curl -Ls --retry 2 --connect-timeout 20 -o arial32.exe \
+            "https://sourceforge.net/projects/corefonts/files/the%20fonts/final/arial32.exe" \
+            >> "$ERR_LOG" 2>&1; then
+            cabextract -q arial32.exe >> "$ERR_LOG" 2>&1 || true
+            rm -f arial32.exe
+            fc-cache -f "$_FONT_DIR" 2>/dev/null || true
+            log "  -> Fuentes MS instaladas en $_FONT_DIR"
+        else
+            printf '[ERROR %s] No se pudo descargar arial32.exe\n' "$(date '+%H:%M:%S')" >> "$ERR_LOG"
+        fi
+        cd - > /dev/null || true
+    }
+
     _gp 90 "Habilitando servicios..."
     enable_service dbus
     enable_service NetworkManager
@@ -1766,7 +1986,7 @@ main_menu() {
 
         case "$CHOICE" in
             1)
-                if yesno "Modo Express instalara:\n\n  xorg + xinit + xinput + libinput\n  Microcódigo CPU (AMD/Intel auto-detectado)\n  PipeWire (audio)\n  KDE Plasma 6 + apps esenciales\n  TLP (ahorro de energia)\n  SDDM (gestor de sesion)\n\nDeseas continuar?"; then
+                if yesno "Modo Express instalara:\n\n  xorg + xinit + xinput + libinput\n  Microcódigo CPU (AMD/Intel auto-detectado)\n  PipeWire (audio)\n  KDE Plasma 6 + apps esenciales\n  TLP (ahorro de energia)\n  SDDM (gestor de sesion)\n  curl + cabextract\n  Fuentes Noto CJK (japonés/chino/coreano)\n  Fuentes MS Core (Arial, Times New Roman...)\n\nDeseas continuar?"; then
                     detect_hardware
                     step_update
                     step_repos
@@ -1787,6 +2007,7 @@ main_menu() {
                 step_power
                 step_timeshift
                 step_pim
+                step_fonts
                 step_extra
                 step_shell_env
                 step_finish
