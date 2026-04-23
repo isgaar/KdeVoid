@@ -1,0 +1,136 @@
+[General]
+Name=Obsidian Elegante
+ColorScheme=Obsidian Elegante
+
+[ColorEffects:Disabled]
+Color=38,38,42
+ColorAmount=0
+ColorEffect=0
+ContrastAmount=0.50
+ContrastEffect=1
+IntensityAmount=0.05
+IntensityEffect=2
+
+[ColorEffects:Inactive]
+ChangeSelectionColor=true
+Color=90,90,98
+ColorAmount=0.02
+ColorEffect=2
+ContrastAmount=0.06
+ContrastEffect=2
+Enable=false
+IntensityAmount=0
+IntensityEffect=0
+
+; ── Botones ────────────────────────────────────────────────────────────────────
+; Gris oscuro cálido, casi sin color
+[Colors:Button]
+BackgroundNormal=42,41,46
+BackgroundAlternate=50,49,55
+DecorationFocus=160,130,200
+DecorationHover=160,130,200
+ForegroundNormal=215,212,220
+ForegroundInactive=95,93,102
+ForegroundActive=175,145,215
+ForegroundLink=155,135,195
+ForegroundVisited=125,115,145
+ForegroundNegative=220,80,75
+ForegroundNeutral=210,155,60
+ForegroundPositive=80,185,100
+
+; ── Selección ──────────────────────────────────────────────────────────────────
+; Violeta perlado suave — nada de azul eléctrico
+[Colors:Selection]
+BackgroundNormal=110,85,155
+BackgroundAlternate=90,68,132
+DecorationFocus=160,130,200
+DecorationHover=160,130,200
+ForegroundNormal=240,238,245
+ForegroundInactive=200,195,215
+ForegroundActive=255,255,255
+ForegroundLink=255,255,255
+ForegroundVisited=225,220,240
+ForegroundNegative=255,255,255
+ForegroundNeutral=255,255,255
+ForegroundPositive=255,255,255
+
+; ── Tooltips ───────────────────────────────────────────────────────────────────
+[Colors:Tooltip]
+BackgroundNormal=38,37,44
+BackgroundAlternate=44,43,50
+DecorationFocus=160,130,200
+DecorationHover=160,130,200
+ForegroundNormal=215,212,220
+ForegroundInactive=95,93,102
+ForegroundActive=175,145,215
+ForegroundLink=155,135,195
+ForegroundVisited=125,115,145
+ForegroundNegative=220,80,75
+ForegroundNeutral=210,155,60
+ForegroundPositive=80,185,100
+
+; ── Vistas (listas, árboles, paneles de contenido) ────────────────────────────
+; El más oscuro — casi negro con toque violáceo invisible
+[Colors:View]
+BackgroundNormal=20,19,24
+BackgroundAlternate=24,23,28
+DecorationFocus=160,130,200
+DecorationHover=160,130,200
+ForegroundNormal=215,212,220
+ForegroundInactive=90,88,100
+ForegroundActive=175,145,215
+ForegroundLink=155,135,195
+ForegroundVisited=125,115,145
+ForegroundNegative=220,80,75
+ForegroundNeutral=210,155,60
+ForegroundPositive=80,185,100
+
+; ── Ventanas ───────────────────────────────────────────────────────────────────
+[Colors:Window]
+BackgroundNormal=28,27,33
+BackgroundAlternate=33,32,38
+DecorationFocus=160,130,200
+DecorationHover=160,130,200
+ForegroundNormal=215,212,220
+ForegroundInactive=90,88,100
+ForegroundActive=175,145,215
+ForegroundLink=155,135,195
+ForegroundVisited=125,115,145
+ForegroundNegative=220,80,75
+ForegroundNeutral=210,155,60
+ForegroundPositive=80,185,100
+
+; ── Complementario ─────────────────────────────────────────────────────────────
+[Colors:Complementary]
+BackgroundNormal=32,31,38
+BackgroundAlternate=38,37,44
+DecorationFocus=160,130,200
+DecorationHover=160,130,200
+ForegroundNormal=215,212,220
+ForegroundInactive=90,88,100
+ForegroundActive=175,145,215
+ForegroundLink=155,135,195
+ForegroundVisited=125,115,145
+
+; ── Cabeceras ──────────────────────────────────────────────────────────────────
+; Idéntico a Window para que los bordes se fundan con la barra de título
+[Colors:Header]
+BackgroundNormal=26,25,31
+BackgroundAlternate=30,29,36
+DecorationFocus=160,130,200
+DecorationHover=160,130,200
+ForegroundNormal=205,202,214
+ForegroundInactive=82,80,92
+ForegroundActive=175,145,215
+ForegroundLink=155,135,195
+ForegroundVisited=125,115,145
+
+; ── Gestor de ventanas ─────────────────────────────────────────────────────────
+; Activo e inactivo casi iguales → bordes invisibles
+[WM]
+activeBackground=26,25,31
+activeBlend=26,25,31
+activeForeground=210,207,220
+inactiveBackground=22,21,26
+inactiveBlend=22,21,26
+inactiveForeground=72,70,82

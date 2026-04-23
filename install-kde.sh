@@ -694,14 +694,13 @@ INTELCFG
             ;;
 
         amd)
-            if yesno "Instalar drivers AMD / ATI?\n\n  Paquetes:\n    xf86-video-amdgpu  -> Driver Xorg moderno (GCN+)\n    mesa               -> OpenGL / Vulkan (open source)\n    mesa-vaapi         -> Aceleracion VA-API\n    mesa-vdpau         -> Aceleracion VDPAU\n    vulkan-loader      -> Loader Vulkan\n    mesa-vulkan-radeon -> Backend Vulkan AMD (RADV)\n\nRecomendado para Radeon HD 7000+ / RX series."; then
+            if yesno "Instalar drivers AMD / ATI?\n\n  Paquetes:\n    xf86-video-amdgpu  -> Driver Xorg moderno (GCN+)\n    mesa               -> OpenGL / Vulkan + VDPAU incluido\n    mesa-vaapi         -> Aceleracion VA-API\n    vulkan-loader      -> Loader Vulkan\n    mesa-vulkan-radeon -> Backend Vulkan AMD (RADV)\n\nNota: VDPAU ya viene incluido en mesa-dri.\nRecomendado para Radeon HD 7000+ / RX series."; then
                 clear
                 log "Instalando drivers AMD..."
                 sudo xbps-install -Suy \
                     xf86-video-amdgpu \
                     mesa \
                     mesa-vaapi \
-                    mesa-vdpau \
                     vulkan-loader \
                     mesa-vulkan-radeon 2>/dev/null || true
 
@@ -720,7 +719,7 @@ AMDCFG
 
                 groups | grep -qw video || sudo usermod -aG video "$USER" 2>/dev/null || true
                 log "  -> Drivers AMD instalados"
-                msgbox "Drivers AMD instalados.\n\nArchivos creados:\n  /etc/X11/xorg.conf.d/20-amdgpu.conf\n\nVerifica con:\n  glxinfo | grep renderer\n  vainfo\n  vdpauinfo"
+                msgbox "Drivers AMD instalados.\n\nArchivos creados:\n  /etc/X11/xorg.conf.d/20-amdgpu.conf\n\nNota: VDPAU ya viene incluido en mesa-dri.\n\nVerifica con:\n  glxinfo | grep renderer\n  vainfo"
             fi
             ;;
 
@@ -2003,7 +2002,7 @@ install_express() {
             _xbps xf86-video-intel mesa intel-video-accel vulkan-loader mesa-vulkan-intel
             ;;
         amd)
-            _xbps xf86-video-amdgpu mesa mesa-vaapi mesa-vdpau vulkan-loader mesa-vulkan-radeon
+            _xbps xf86-video-amdgpu mesa mesa-vaapi vulkan-loader mesa-vulkan-radeon
             ;;
         nvidia)
             # Asegurar nonfree habilitado
